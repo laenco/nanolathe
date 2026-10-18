@@ -413,8 +413,11 @@ func TestSilentFifteen(t *testing.T) {
 	if head.Deadline != int32(tick+15) {
 		t.Fatalf("silent retry deadline %d want %d", head.Deadline, tick+15)
 	}
-	if head.DynamicGate != WakeBit1|WakeBit2 {
-		t.Fatalf("silent retry wake %d want %d (bits 1+2)", head.DynamicGate, WakeBit1|WakeBit2)
+	// The blocked retry arms bits 1+2 and, because it set a deadline, the shared
+	// setter's deadline bit: without it the retry never reaches the record that
+	// armed it [04 R-ORD-01 §0, 0x1 row].
+	if head.DynamicGate != WakeBit1|WakeBit2|orders.GateDeadline {
+		t.Fatalf("silent retry wake %d want %d (bits 1+2 plus the deadline bit)", head.DynamicGate, WakeBit1|WakeBit2|orders.GateDeadline)
 	}
 	if head.Phase != uint8(State2) {
 		t.Fatalf("should stay state2")

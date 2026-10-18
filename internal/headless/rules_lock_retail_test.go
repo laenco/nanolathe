@@ -289,17 +289,31 @@ import (
 // both ashap locks, both online Modern AI digests and every Strict and
 // Community lock hold: Strict and Community never hold such a shot. Every
 // Modern value is the same with GOMAXPROCS 1, 2 and 12.
+//
+// The construction retry's deadline bit ([04 R-ORD-01 §0]) moves every value
+// below except the three benchmark composition locks, the Modern 6000-tick
+// ashap lock and both terminal ticks. Seven construction sites armed a retry —
+// a wait mask plus a deadline — without the ordinary deadline bit that the
+// shared deadline setter always ORs alongside a deadline, so the record's own
+// retry could never reach it; the arms now carry the bit. The digest
+// serializes each unit's order records, so the armed mask word is what moves,
+// and nothing observable moves with it: the Strict ashap scene reports a
+// byte-identical result apart from the digest at 6000 ticks and again at the
+// full 54000-tick bound, and at the benchmark scene's locked step 1500 the
+// whole 767-unit census (identity, alive and dying, remaining fraction, health,
+// position) and every player's resource stock match exactly. None of the locked
+// scenes reaches the stall this fixes.
 const (
 	lockAshapMap                   = "ashap plateau"
 	lockAshapSeed           uint32 = 7
 	lockAshapUnitLimit             = 250 // Strict setting; Community's table overrides it.
 	lockDifficulty                 = 1
-	lockAshapStrict6000            = "partial-v1:1fc360913f7d32fb"
-	lockAshapCommunity6000         = "partial-v1:25ebe70b68b04a1a"
+	lockAshapStrict6000            = "partial-v1:438f48486e2bf1bc"
+	lockAshapCommunity6000         = "partial-v1:87383c757564299f"
 	lockAshapModern6000            = "partial-v1:b574c1e0b3361b82"
-	lockAshapStrict54000           = "partial-v1:90887a3fc87a6486"
-	lockAshapCommunity54000        = "partial-v1:01080593bac20f0c"
-	lockAshapModern54000           = "partial-v1:bf5ea55514907978"
+	lockAshapStrict54000           = "partial-v1:4c2fbc1bd866a87d"
+	lockAshapCommunity54000        = "partial-v1:0208407e774f6a73"
+	lockAshapModern54000           = "partial-v1:a964ee8b29415268"
 	lockAshapStrictEnd      uint32 = 54000
 	lockAshapCommunityEnd   uint32 = 54000
 	lockAshapModernEnd      uint32 = 49200
@@ -310,12 +324,12 @@ const (
 	lockBenchStrictInitial           = "partial-v1:bf488aacf042d582"
 	lockBenchCommunityInitial        = "partial-v1:55165c066f8b6eaa"
 	lockBenchModernInitial           = "partial-v1:55165c066f8b6eaa"
-	lockBenchStrictWarm              = "partial-v1:92288be0462952a2"
-	lockBenchCommunityWarm           = "partial-v1:9ca4bb1bae72a0e7"
-	lockBenchModernWarm              = "partial-v1:b29e92b1f56dda76"
-	lockBenchStrictFinal             = "partial-v1:4a9bfa48817da57c"
-	lockBenchCommunityFinal          = "partial-v1:a97cef8ec7ca358d"
-	lockBenchModernFinal             = "partial-v1:2489ded57e35f247"
+	lockBenchStrictWarm              = "partial-v1:d3af69ddbf431437"
+	lockBenchCommunityWarm           = "partial-v1:775c97397cb0a0e4"
+	lockBenchModernWarm              = "partial-v1:ddec71d89959697f"
+	lockBenchStrictFinal             = "partial-v1:72dba239ed9b5625"
+	lockBenchCommunityFinal          = "partial-v1:5178f018d12e6da1"
+	lockBenchModernFinal             = "partial-v1:556cef28809a8dc3"
 )
 
 // The expanded retail audit corrects active-search budget continuation
@@ -379,7 +393,7 @@ func TestStrictFingerprintIsLocked(t *testing.T) {
 const (
 	lockPoolSeed           uint32 = 5
 	lockPoolSteps                 = 4500
-	lockPoolStrictAt4500          = "partial-v1:418db2765d31b38b"
+	lockPoolStrictAt4500          = "partial-v1:ea716150f8eaf8c9"
 	lockPoolStrictCapacity        = 300 // retail's fixed active-effect pool [03 §1]
 )
 

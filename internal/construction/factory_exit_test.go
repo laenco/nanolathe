@@ -477,8 +477,8 @@ func TestBlockedExitRetriesOnTheFifteenthTick(t *testing.T) {
 			t.Fatalf("admission attempts %v, want %v [05 C17]", attempts, want)
 		}
 	}
-	if head.DynamicGate != WakeBit1|WakeBit2 || head.Deadline != int32(start+60) {
+	if head.DynamicGate != WakeBit1|WakeBit2|orders.GateDeadline || head.Deadline != int32(start+60) {
 		t.Fatalf("blocked node gate=%d deadline=%d, want gate=%d deadline=%d",
-			head.DynamicGate, head.Deadline, WakeBit1|WakeBit2, start+60)
+			head.DynamicGate, head.Deadline, WakeBit1|WakeBit2|orders.GateDeadline, start+60)
 	}
 }

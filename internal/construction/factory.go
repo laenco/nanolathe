@@ -95,6 +95,22 @@ const (
 	InterruptStop   uint32 = 1 << 3 // mask bit 3 value 8 "Construction stopped" [05 C22]
 )
 
+// armDeadline is the shared deadline setter these state machines call whenever
+// they intend to be visited again: it records the tick and always ORs the
+// ordinary deadline bit into the gate alongside the wait the handler wants
+// [04 R-ORD-01 §0]. The pump raises that bit
+// when a deadline expires and reaches a handler only through the intersection
+// with the gate, so a mask without it can never see its own deadline arrive:
+// the expiry clears the deadline, the handler runs only on a match, and only the
+// handler re-arms it. Six sites armed a wait and a deadline without that bit,
+// and the one that matters most is the work loop's one-tick retry: a building
+// working on itself has no other wake source, so it stopped there for the rest
+// of the battle with no resource draw.
+func armDeadline(node *orders.Node, gate uint32, deadline int32) {
+	node.DynamicGate = gate | orders.GateDeadline
+	node.Deadline = deadline
+}
+
 // Standing-order masks [05 "Rally inheritance"] bits 18-19 and 20-21 from factory class/state word.
 const (
 	StandingMoveMask uint32 = 0x000C0000 // bits 18-19 [05]

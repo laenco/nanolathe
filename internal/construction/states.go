@@ -264,8 +264,7 @@ func (s *Service) handleState2(factory *units.Unit, node *orders.Node, tick uint
 		// timeout [05 C17]. Wake mask is bits {1,2}: schedule(node,15) sets
 		// bit 1 + deadline and the caller adds bit 2
 		// [05 "Factory production lifecycle"].
-		node.DynamicGate = WakeBit1 | WakeBit2
-		node.Deadline = int32(tick + 15)
+		armDeadline(node, WakeBit1|WakeBit2, int32(tick+15))
 		// No message, no allocation — silent.
 		//
 		// This silent retry, the yard-close admission gate (YardOpenTransaction)
@@ -294,8 +293,8 @@ func (s *Service) handleState2(factory *units.Unit, node *orders.Node, tick uint
 		// "not created → status 7 `Unable to create any more units`, deadline
 		// 300, hold" [04 R-ORD-01 §5][05 "the build-order caption census"].
 		s.raiseStatus(factory, statusCant, ErrLimitMessage)
-		node.DynamicGate = WakeBit2 // F6b: the allocator refusal wakes on bit 2 [05 "Factory production lifecycle"]
-		node.Deadline = int32(tick + 300)
+		// F6b: the allocator refusal wakes on bit 2 [05 "Factory production lifecycle"]
+		armDeadline(node, WakeBit2, int32(tick+300))
 		// Stay in state2.
 		return
 	}
@@ -409,17 +408,17 @@ func (s *Service) mobilePlacementVisit(builder *units.Unit, node *orders.Node, t
 	// Site anchor is authoritative Goal from QueueMobileBuild [P0-I05].
 	extent, err := world.NewFootprintExtent(int32(footX), int32(footZ))
 	if err != nil {
-		node.DynamicGate, node.Deadline = WakeBit2, int32(tick+15)
+		armDeadline(node, WakeBit2, int32(tick+15))
 		return 2
 	}
 	anchor, err := world.SnapFootprintAnchor(node.GoalX, node.GoalZ, extent)
 	if err != nil {
-		node.DynamicGate, node.Deadline = WakeBit1|WakeBit2, int32(tick+15)
+		armDeadline(node, WakeBit1|WakeBit2, int32(tick+15))
 		return 2
 	}
 	rect, err := world.NewFootprintRect(anchor, extent)
 	if err != nil {
-		node.DynamicGate, node.Deadline = WakeBit1|WakeBit2, int32(tick+15)
+		armDeadline(node, WakeBit1|WakeBit2, int32(tick+15))
 		return 2
 	}
 	cell := anchor.Cell()
@@ -488,7 +487,7 @@ func (s *Service) mobilePlacementVisit(builder *units.Unit, node *orders.Node, t
 	}
 	mobilePlacement, err := world.SnapMobilePlacement(node.GoalX, siteY, node.GoalZ, extent)
 	if err != nil {
-		node.DynamicGate, node.Deadline = WakeBit1|WakeBit2, int32(tick+15)
+		armDeadline(node, WakeBit1|WakeBit2, int32(tick+15))
 		return 2
 	}
 	var product *units.Unit
@@ -506,8 +505,7 @@ func (s *Service) mobilePlacementVisit(builder *units.Unit, node *orders.Node, t
 			return 8
 		}
 
-		node.DynamicGate = WakeBit2
-		node.Deadline = int32(tick + 300)
+		armDeadline(node, WakeBit2, int32(tick+300))
 		return 2
 	}
 	// For mobile, success epilogue reuses factory helper but with builder as factory and cell as site cell.
@@ -662,8 +660,7 @@ func (s *Service) handleState3(factory *units.Unit, node *orders.Node, tick uint
 	}
 	if factory.Def == nil {
 		// No worker time.
-		node.DynamicGate = WakeBit1 | WakeBit3
-		node.Deadline = int32(tick + 1)
+		armDeadline(node, WakeBit1|WakeBit3, int32(tick+1))
 		return
 	}
 	committed := s.applyWorkStep(factory, product, tick)
@@ -708,8 +705,7 @@ func (s *Service) handleState3(factory *units.Unit, node *orders.Node, tick uint
 	// Denied work leaves the remaining fraction untouched, and an accepted step
 	// that did not finish the product retries the same way: one tick later with
 	// wake bits 1 and 3 [05 "Two-resource admission"][05].
-	node.DynamicGate = WakeBit1 | WakeBit3
-	node.Deadline = int32(tick + 1)
+	armDeadline(node, WakeBit1|WakeBit3, int32(tick+1))
 }
 
 func (s *Service) handleState4(factory *units.Unit, node *orders.Node, tick uint32) {

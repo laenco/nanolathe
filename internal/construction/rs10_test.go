@@ -332,8 +332,8 @@ func TestRS10_FactoryBlockedRetryAndLimit(t *testing.T) {
 	if head.Deadline != int32(25) {
 		t.Fatalf("blocked retry deadline want 25 got %d", head.Deadline)
 	}
-	if head.DynamicGate != WakeBit1|WakeBit2 {
-		t.Fatalf("blocked wake bits")
+	if head.DynamicGate != WakeBit1|WakeBit2|orders.GateDeadline {
+		t.Fatalf("blocked wake bits %d, want the retry mask with the deadline bit %d", head.DynamicGate, WakeBit1|WakeBit2|orders.GateDeadline)
 	}
 	if len(svc.Messages()) != 0 {
 		t.Fatalf("blocked should be silent")

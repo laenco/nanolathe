@@ -48,6 +48,12 @@ import (
 	"github.com/nanolathe-gg/nanolathe/internal/world"
 )
 
+// GateDeadline is the shared deadline setter's bit, exported for the packages
+// that arm a retry: a record's gate has to carry it whenever a deadline is set,
+// because expiry is raised only as this bit and the pump reaches a handler only
+// through the intersection with the gate [04 R-ORD-01 §0].
+const GateDeadline = gateDeadline
+
 // Gate bits the work rows arm, named once [04 R-ORD-01 §0][04 R-ORD-01 §6].
 const (
 	gateDeadline      uint32 = 0x1  // the shared deadline setter's bit; the pump sets it on expiry

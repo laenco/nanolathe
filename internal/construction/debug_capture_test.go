@@ -50,7 +50,7 @@ func TestAdmissionCaptureAcrossBlockedRetries(t *testing.T) {
 		tick := uint32(10 + 15*i)
 		observed.Pump(factory, tick)
 		control.Pump(controlFactory, tick)
-		if node.Deadline != int32(tick+15) || node.DynamicGate != WakeBit1|WakeBit2 || node.Phase != uint8(State2) || node.Target != 0 {
+		if node.Deadline != int32(tick+15) || node.DynamicGate != WakeBit1|WakeBit2|orders.GateDeadline || node.Phase != uint8(State2) || node.Target != 0 {
 			t.Fatalf("retry changed at %d: %+v", tick, node)
 		}
 		before := *node
