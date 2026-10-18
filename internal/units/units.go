@@ -1892,6 +1892,16 @@ func (w *World) create(def *content.UnitDef, owner uint8, x, y, z numeric.Fixed,
 	u.Move.Heading = HeadingWithFacing(u.Move.Heading, facing)
 	w.units[idx] = u
 	w.rawUnits[idx] = u
+	// An unfinished unit is allocated with its script-owned stance bits cleared
+	// [05 "Nanoframe allocation"], and that clear sits ahead of `Create`
+	// [04 R-CB-01 §2]: a script that raises `INBUILDSTANCE` in `Create` — as
+	// Escalation's self-upgrading buildings do to signal they are ready to work —
+	// keeps the raise. Clearing it after `Create` instead parks that unit's first
+	// work order in the phase-1 stance wait forever, because the only later raise
+	// lives in `StopBuilding`, which a build that never starts cannot reach.
+	if !alreadyBuilt {
+		u.InBuildStance = false
+	}
 	if err := w.attachCOB(u); err != nil {
 		w.units[idx] = nil
 		w.rawUnits[idx] = nil

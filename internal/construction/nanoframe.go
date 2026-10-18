@@ -244,7 +244,10 @@ func initializeNanoframe(prod *units.Unit, def *content.UnitDef) {
 	prod.Remaining = 1
 	prod.Health = 0
 	prod.MaxHealth = int32(def.MaxDamage)
-	prod.InBuildStance = false
+	// The script-owned stance clear belongs to the slot allocation, ahead of the
+	// unit's `Create` [05 "Nanoframe allocation"][04 R-CB-01 §2]; clearing it here
+	// ran after `Create` and erased the stance a script raises there, which is how
+	// Escalation's self-upgrading buildings signal that they are ready to work.
 	prod.Alive = true
 	// A nanoframe is INACTIVE. The world's own allocation path no longer raises
 	// the edge for a frame (World.CreateNanoframe above), so for that path this
