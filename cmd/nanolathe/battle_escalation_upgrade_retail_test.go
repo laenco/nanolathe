@@ -3,16 +3,16 @@
 package main
 
 import (
+	"fmt"
 	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/nanolathe-gg/nanolathe/internal/camera"
 	"github.com/nanolathe-gg/nanolathe/internal/client"
 	"github.com/nanolathe-gg/nanolathe/internal/gameplay"
-	"github.com/nanolathe-gg/nanolathe/internal/pool"
+	"github.com/nanolathe-gg/nanolathe/internal/hud"
 	"github.com/nanolathe-gg/nanolathe/internal/session"
 	"github.com/nanolathe-gg/nanolathe/internal/sim/numeric"
 	"github.com/nanolathe-gg/nanolathe/internal/testsupport"
@@ -47,57 +47,63 @@ func TestEscalationAegisUpgradeFromAuthoredMenu(t *testing.T) {
 			}
 		}
 	}
+	windowCtx := newBattleWindowContext(cs, nil)
+	windowCtx.completeTransition()
+	hudView, err := loadRetailBattleHUD(cs.fs, sess, cat, retailPaletteForTest(t, cs), nil, windowCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl, err := client.New(client.Options{Width: 1280, Height: 768})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &battleSession{sess: sess, cat: cat, cl: cl, hud: hudView}
 	def, ok := cat.Unit("ARMSHGEN")
 	if !ok || def.Builder {
 		t.Fatal("fixture must retain the Aegis's authored non-builder flag")
 	}
 	x, z := numeric.FixedFromInt(600), numeric.FixedFromInt(600)
-	h, err := sess.Units.Create(def, 0, x, sess.World.HeightAt(x, z), z)
+	h, err := sess.Units.Create(def, sess.LocalOwner, x, sess.World.HeightAt(x, z), z)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sess.CompleteUnit(h)
 	provider := sess.Units.Unit(h)
+	// The shown page is the client's local interface state; the committed frame
+	// publishes it (DESIGN_MULTIPLAYER §7.3).
+	provider.Flags = hud.EncodePageBits(provider.Flags, 1)
 	recipientDef, ok := cat.Unit("ARMMEX")
 	if !ok {
 		t.Fatal("missing extractor")
 	}
 	rx := x + numeric.FixedFromInt(500)
-	rh, err := sess.Units.Create(recipientDef, 0, rx, sess.World.HeightAt(rx, z), z)
+	rh, err := sess.Units.Create(recipientDef, sess.LocalOwner, rx, sess.World.HeightAt(rx, z), z)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sess.CompleteUnit(rh)
 	recipient := sess.Units.Unit(rh)
-	for _, c := range []session.HumanCommand{
-		{Kind: session.HumanSelectionReplace, Selection: session.HumanSelectionCommand{Handles: []pool.Handle{h}}},
-		{Kind: session.HumanBuildPage, BuildPage: session.HumanBuildPageCommand{Builder: h, Page: 1}},
-	} {
-		if err := sess.EnqueueHumanCommand(c); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for tick := 0; tick < 300; tick++ {
-		sess.Step(sess.Clock.ScaledAnchor + 1)
+	// Selection is local state too, so the frame only carries it once the
+	// client's interface has been advanced by stepping.
+	b.local = testSelection(provider)
+	for step := int32(1); step <= 5; step++ {
+		sess.Step(step)
 	}
 	if recipient.Armored {
 		t.Fatal("extractor outside the base radius is already protected")
 	}
-	cl, err := client.New(client.Options{Width: 640, Height: 480})
-	if err != nil {
-		t.Fatal(err)
+	// The frame the HUD reads is the committed one with the client's local
+	// interface composed in; the raw sim snapshot carries no selection or page.
+	f, _ := b.currentSnapshot()
+	if f == nil {
+		t.Fatal("no committed frame")
 	}
-	b := &battleSession{sess: sess, cat: cat, cl: cl, cam: &camera.Camera{ViewW: 640, ViewH: 480, MapW: int32(sess.World.CellW * 16), MapH: int32(sess.World.CellH * 16)}}
-	b.hud, err = loadRetailBattleHUD(cs.fs, sess, cat, retailPaletteForTest(t, cs), nil, newBattleWindowContext(cs, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	w, _, err := b.hud.windowForRequired(b, sess.Snapshot.Current())
+	w, _, err := b.hud.windowForRequired(b, f)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if w == nil {
-		t.Fatal("Aegis's numbered GUI was not loaded")
+		t.Fatalf("Aegis's numbered GUI was not loaded: builder=%d page=%d pageCount=%d selection=%v", f.CommandPage.Builder, f.CommandPage.Page, f.CommandPage.PageCount, f.Selection.Handles)
 	}
 	capture := func(name string) {
 		t.Helper()
@@ -145,27 +151,61 @@ func TestEscalationAegisUpgradeFromAuthoredMenu(t *testing.T) {
 	// the upgrade. The extractor is outside the base radius (377.5), inside
 	// the completed upgrade radius (570) [research/extensions/escalation-shields.md
 	// "Coverage discovery and recipient behavior"].
-	for tick := 0; tick < 8000; tick++ {
+	//
+	// Coverage is the recipient's own scan, so a provider that arrives after the
+	// recipient has already polled is seen at that scan's next visit, and the
+	// authored delay for a recipient whose last scan recognized no nearby source
+	// is 200-300 s — 6000-9000 logical ticks at the 30 Hz tick. Measured here:
+	// the extractor flips 6681 ticks after an upgrade marker appears next to it,
+	// inside that band [research/extensions/escalation-shields.md "ARMMEX
+	// polling"]. The budget below is the construction plus that wait.
+	const repollBudget = 9500
+	fund := func() {
 		p := &sess.Econ.Players[0]
 		p.Stock, p.Capacity = [2]float32{1e6, 1e6}, [2]float32{1e6, 1e6}
+	}
+	builtAt, coveredAt := -1, -1
+	for tick := 0; coveredAt < 0 && tick < 40000; tick++ {
+		fund()
 		sess.Step(sess.Clock.ScaledAnchor + 1)
 		if tick == 0 {
 			capture("queued")
 		}
-		if len(provider.Attachment.Cargo) != 1 || !recipient.Armored {
+		if len(provider.Attachment.Cargo) != 1 {
 			continue
 		}
 		upgrade := sess.Units.Unit(provider.Attachment.Cargo[0])
-		if upgrade == nil || upgrade.Def.CanonicalKey != "armshgen_upg" || upgrade.Remaining != 0 || upgrade.Attachment.Carrier != h || provider.InBuildStance {
+		if upgrade == nil || upgrade.Def.CanonicalKey != "armshgen_upg" || upgrade.Remaining != 0 || upgrade.Attachment.Carrier != h {
 			continue
 		}
-		for _, u := range []*units.Unit{provider, upgrade, recipient} {
-			if diags := u.GetScript().Diagnostics(); len(diags) != 0 {
-				t.Fatalf("%s diagnostics: %v", u.Def.UnitName, diags)
+		if builtAt < 0 {
+			builtAt = tick
+			capture("built")
+		}
+		if recipient.Armored {
+			coveredAt = tick
+			break
+		}
+		if tick-builtAt > repollBudget {
+			break
+		}
+	}
+	if coveredAt < 0 {
+		upgradeState := "none"
+		if len(provider.Attachment.Cargo) == 1 {
+			if u := sess.Units.Unit(provider.Attachment.Cargo[0]); u != nil {
+				upgradeState = fmt.Sprintf("def=%s remaining=%.4f carrier=%d alive=%v dying=%v", u.Def.CanonicalKey, u.Remaining, u.Attachment.Carrier, u.Alive, u.Dying)
+			} else {
+				upgradeState = "cargo unit missing"
 			}
 		}
-		capture("complete")
-		return
+		t.Fatalf("Aegis upgrade did not extend coverage: builtAt=%d cargo=%+v upgrade{%s} armor=%v diagnostics=%v", builtAt, provider.Attachment.Cargo, upgradeState, recipient.Armored, provider.GetScript().Diagnostics())
 	}
-	t.Fatalf("Aegis upgrade never completed with extended protection: cargo=%+v armor=%v stance=%v diagnostics=%v", provider.Attachment.Cargo, recipient.Armored, provider.InBuildStance, provider.GetScript().Diagnostics())
+	for _, u := range []*units.Unit{provider, sess.Units.Unit(provider.Attachment.Cargo[0]), recipient} {
+		if diags := u.GetScript().Diagnostics(); len(diags) != 0 {
+			t.Fatalf("%s diagnostics: %v", u.Def.UnitName, diags)
+		}
+	}
+	t.Logf("the upgraded Aegis covered the extractor %d ticks (about %.0f s) after the upgrade finished", coveredAt-builtAt, float32(coveredAt-builtAt)/30)
+	capture("complete")
 }
