@@ -91,6 +91,12 @@ Every post-entry reader — commander identity, alliance, the score rows, the
 save's `Player%i` account — reads the player record `[08 R-SKIR-01 §2]`
 `[08 "Player records"]`.
 
+Computer registration uses each compiled `SideDef.Name`, including a mod's
+replacement of base side ordinals 0/1. Stock ARM/CORE definitions keep retail's
+`Arm`/`Core` spelling. These labels follow content in every gameplay mode,
+including faction composition (DESIGN_MODS_MUTATORS §5.8); explicit player
+names remain independent of that default.
+
 ## 2. Packages and key types
 
 The save/load directory is `savegame` beneath the resolved installation root,
@@ -631,6 +637,15 @@ storage items are the storage-bonus **operands** and its storage flag the
 bonus enable bit; the derived capacities are not persisted — a restored
 player's capacity is rebuilt from its units plus the restored bonus at its
 first settlement pass `[08 "Player records"]` `[05 R-ECO-01 §4]`.
+
+Names and score-panel ranks have no item in that closed account. Staging and
+core restoration initialize each saved slot's registration rank to its slot
+index and fill an empty skirmish name from its restored controller and side.
+This keeps every qualifying row available, including an eliminated player and
+non-contiguous saved slots, without extending the bank. Whether retail later
+reorders the initial ranks from restored kill counts remains the existing
+research unknown; the current placeholder retains registration order until a
+credited kill shifts it `[08 R-SKIR-01 §2]` `[07 R-HUD-04 §1]`.
 
 `PlayersMeta` is the rest of the `Players` account: the `Human Player` integer
 and the `GameTime` box. **The load default for `Human Player` is `10`, no
@@ -1705,6 +1720,46 @@ changing the distance branches and their RNG effects `[08 R-AI-01 §3]`
   name's own strip is unchanged (`v1.2 final` still saves as `v1.SAV`), in
   every gameplay mode; only the host prefix is excluded from the strip.
 
+* **Autosave, quick save and quick load (user-authorized 2026-10-21, issue
+  #146).** Retail has none of them.
+  - **Autosave on leaving.** Leaving a live skirmish, campaign or Survival
+    battle — the window's close button, or Exit Game or Main Menu in the
+    battle menu — first writes it to the `Autosave` slot. It goes through
+    the ordinary bank and sidecar projection. Automatic slots stage and
+    validate the complete pair before replacing an earlier slot; a failed
+    publication restores its previous bank and sidecar. An unrecoverable
+    rollback retains and names the backup directory. Explicit retail Save
+    keeps its truncate-write contract.
+  - **Periodic autosave.** A live battle is also written to `Autosave`
+    every ten minutes of game time. A paused game's clock does not run.
+  - **Quick save and quick load.** Ctrl+F11 writes the `Quicksave` slot and
+    Ctrl+F12 loads it.
+  - **What writes nothing.** A battle whose result has latched, an online
+    battle and a replay's playback write nothing.
+  - **Where.** These writes go only into a host-selected save directory
+    (`--save-dir`, which the installer's launcher always passes). Without
+    one, the save directory is `SAVEGAME` inside the game folder, which
+    nothing writes unasked.
+  - **The close button.** The window backend hands the close button to the
+    game. The game autosaves after the simulation join, then requests the
+    exit. The client notification joins the parallel recorder before changing
+    client state. A pending close cannot enter paused presentation sleep or
+    be bypassed by audio maintenance. A game that does not answer within five
+    seconds closes anyway.
+  - **Continuing.** The load dialog opens with the newest save selected;
+    the list stays sorted oldest first `[08 R-SAVE-02 §1]`. So continuing
+    an interrupted battle is Load Game, then OK.
+  - **Tests.** In `cmd/nanolathe`: `TestLeavingALiveBattleWritesTheAutosave`,
+    `TestSurvivalBattleAutosavesAndLoadsAsSurvival`,
+    `TestLoadDialogOpensOnTheNewestSave`, `TestQuickSaveKeys`,
+    `TestQuickSaveThenQuickLoad`, `TestPeriodicAutosave`,
+    `TestSaveSlotsNeedAHostSaveDirectory` and
+    `TestSaveSlotsStayInADottedSaveDirectory`. In `ebitenapp`:
+    `TestWindowCloseIsHandedToTheGameThenForced`,
+    `TestPendingWindowCloseCannotRestBeforeHostStep` and
+    `TestWindowCloseWaitsForRecorderBeforeNotifying`. Slot publication tests
+    inject staging and rename failures and verify the previous pair's bytes.
+
 * **Malformed building yard text uses the shared bounded parser.** AI placement
   applies the same occupied remainder as human placement and occupancy when a
   compiled building's yard text is exhausted, including an absent key. The
@@ -2024,6 +2079,117 @@ is the retail baseline and every fingerprint lock runs Classic.
   background think whose result equals the synchronous one
   ([DESIGN_GAMEPLAY_RULES](DESIGN_GAMEPLAY_RULES.md#the-modern-ai-controller)).
 
+**Long games, low action budgets and teams.** Nanolathe Modern AI policy.
+These are decisions of the brain, not gameplay rules: they use the
+ordinary order and construction paths and add no rule seam, simulation
+RNG draw or per-tick state.
+
+- *Idle builders.* Ordinary constructor production stops while two or more
+  idle economy constructors of the product's domain are already waiting:
+  builders that must stand in water are counted apart from all others, and
+  the commander is not counted. Advanced constructors stay on the tech
+  plan. While at least two builders are idle the economy also spends one
+  action on a group order, the human box-select and right-click: a Guard of
+  the producing factory with the most idle builders within 1200 wu, and from
+  minute 20, when no factory takes them, a Repair of the damaged own or
+  allied unit or unfinished frame with the most. The commander and builders
+  that cannot guard are left out, and the group runs after the previous
+  think's failed builds are processed, so it hides no failed site from
+  backoff, placement-failure counts or stuck-builder detection. Reclaiming
+  stays a per-builder decision, which rests after a clear that found
+  nothing.
+- *Action reserve.* The economy reserves one action for the army only while
+  the base is threatened, and at most one for a factory with an empty,
+  unstalled queue, so a one-action persona's builders are not left
+  waiting behind the army and production.
+- *Commander safety.* The commander's retreat test runs before both
+  reserves and takes the think's action when it fires, so a one-action
+  persona can pull it home while the base is under attack. It fires
+  more than 350 wu from home, or below 60% health, where enemy threat is
+  at least half `threat_half` and outweighs own armed power. No commander
+  work site (a build, an extractor, a tower, a gate or a reclaim) is
+  offered beyond 350 wu of home where that test already holds. The leash
+  is `com_radius` or, when farther, the distance from home to the
+  second-nearest land metal spot, fixed when home is: at a start chosen
+  away from the map's metal the commander, the opening's only builder,
+  otherwise had no extractor it could build.
+- *Production batches.* A persona below 100 APM (Easy and Medium) queues a
+  chosen combat unit two at a time with one action, within any
+  restriction cap; builders, scouts and every product of a faster persona
+  are queued one at a time.
+- *Long-game growth.* `growth` acts for every ambition from minute 20, not
+  only at full ambition, while the metal store is 80% full: the
+  `long_growth` switch (default 1) then supplies its expansion, tech-2,
+  constructor-ratio and factory parts to the lower personas, so metal
+  their smaller plan leaves banked is invested and metal the army needs
+  is not. `long_growth=0` keeps the full-ambition gate. The tier curves
+  still scale the counts by ambition, so a lower persona's plan before
+  minute 20 is unchanged.
+- *Factory pads.* A pad clear moves every unit parked on a stalled pad,
+  and idle units in the short lane in front of it, in one group move to a
+  rally behind home, a quarter of the way from home away from the enemy.
+  A factory written off as walled in is cleared too, so its queue resumes
+  if its exit opens. A stalled pad gets one builder Unblock before two
+  clear attempts; the executor does nothing when the exit is open. While
+  at least two pads are stalled and at least half the factories are,
+  growth adds no factory.
+- *Standing home guard.* From minute 20 the tactics army keeps 10% of its
+  value at home at every attention, within the 15% defend share; the guard
+  otherwise forms only at Attention 3 after an incident. An under-strength
+  guard is filled from main and raid squad members nearest home.
+- *Approach warning.* Incidents begin only at an asset, the base or the
+  commander, so an army closing on home was answered only once it stood
+  among the buildings. Armed enemy ground units within 2400 wu of home
+  that are not yet an incident — in sight, on radar, or seen in the last
+  five seconds — form one approaching force. When it is worth at least
+  600 and what stands a third of the way toward it (towers, commander and
+  home guard) holds less than 1.5 times its strength, the home guard and
+  the main army defend that point. A squad answering an incident keeps
+  it, the main army keeps a fight within 1200 wu of the force, and a main
+  army no more than 600 wu farther from home than the force is left to
+  meet it. `warn=0` turns it off.
+- *Radar over home.* From minute 10, while no stationary radar stands, is
+  under way or is assigned within reach of home, the economy wants one
+  there at need 4000 instead of the ordinary at most 1000, a quarter of
+  the way from home to the front rather than halfway between the front
+  and the rally point. It comes before routine energy and extractors but
+  not before a tower the base urgently needs, and a lost one is wanted
+  again. It is what lets the approach warning see an army coming.
+  `radar_home=0` keeps the forward radar alone.
+- *Allied assets.* Allied buildings and builders in sight are assets for
+  incidents and home defence, so a team's army answers an attack on an
+  ally's base although it cannot command the ally. Own army value and
+  strength stay own-only.
+- *Guard capability.* A definition authored `canguard=0` refuses Guard
+  (code 7), so no layer sends it one: a support unit that cannot guard
+  follows its ward by moving when it stands idle more than 900 wu away,
+  and the economy's guard candidate, the group guard and the assist
+  builders skip such builders.
+- *Resolver diagnostics.* `ApplyStats` breaks `FailResolve` down by command
+  kind and by the first actor's role (commander, builder, combat).
+  Diagnostic state only.
+
+Strict 3.1 with only Classic players is unchanged, and every fingerprint
+lock but the Modern AI's own runs Classic.
+
+Tests: `utility.TestGrowthLongGameFallback`,
+`utility.TestIdleBuildersStopConstructorProduction`,
+`utility.TestIdleBuildersGroupGuardAFactory`,
+`utility.TestIdleBuildersRepairDamagedBuilding`,
+`utility.TestIdleRepairFallbackStartsAfterOpening`,
+`utility.TestFailedBuildBeforeIdleRescue`,
+`utility.TestPadLaneCoversShortExit`,
+`utility.TestLowAPMCombatBatch`,
+`utility.TestCommanderRetreatsBeforeReserves`,
+`utility.TestCommanderAvoidsThreatenedSites`,
+`utility.TestCommanderLeashReachesMetal`,
+`utility.TestRadarOverHome`,
+`tactics.TestStandingGuardAtLowAttention`,
+`tactics.TestStandingGuardRecruitsMainSquad`,
+`tactics.TestApproachCallsArmyHome`,
+`tactics.TestSupportWithoutGuardFollowsByMoving`,
+`aikit.TestFailResolveBreakdown`.
+
 **Radar coverage.** Nanolathe Modern policy (user-requested correction,
 2026-09-26): the utility economy offers a radar only when its request point
 is at least the larger of its authored radar range and each nearby own
@@ -2165,6 +2331,10 @@ without it ([utility README §13.15](../internal/aikit/brains/utility/README.md)
 income across every rule-set switch; a Classic player takes each set's think
 step and income word. No switch starts or stops a Modern controller: only
 the lobby mark chooses it, and nothing changes the mark in battle.
+The AI's difficulty interpretation is also an entry parameter, alongside its
+merged parameters: Escalation's reversed index is read through the retained
+entry Community table, including on restore. Current-rule income projection
+remains separate (DESIGN_COMMUNITY_PATCH §4.8).
 
 **Saves.** The retail bank carries nothing of the controller. What a load
 needs to rebuild each controller with the same personality is a small record
@@ -2507,6 +2677,230 @@ teammate holds as many of that type); the Classic control,
 `session.TestClassicComputerPlayerMeetsACapRetail`
 ([DESIGN_MODS_MUTATORS §15.11](DESIGN_MODS_MUTATORS.md#1511-verification));
 and the existing synchronous/asynchronous arena comparison.
+
+#### Modern AI page products
+
+**Nanolathe Modern AI policy, user-authorized 2026-10-20** (Switeck's TA
+Bugfix left the CORE Modern AI without a radar tower). Like the other Modern
+AI policies it applies in every gameplay mode, including Strict 3.1, and adds
+no rule seam.
+
+**Baseline.** A build page's product gadget builds the product it names, and
+CANBUILD is no whitelist for it [07 §9]: a human builds whatever the
+selected unit's authored pages install. Each rule's membership is unchanged
+([Modern authored build membership](DESIGN_ECONOMY_CONSTRUCTION.md#modern-authored-build-membership)),
+and it remains what the Classic AI, the HUD's resource shortcuts and every
+other reader use. Switeck's patch strips from `sidedata.tdf` the entries it
+expects download records to supply, while its pages still install them
+([Extended build menus](../research/extensions/build-menus.md#canbuild-entries-left-to-the-build-pages)),
+so a membership-only AI misses products a human can build.
+
+**Policy.** The catalog records each builder menu's `InstalledProducts`: in
+the builder's numbered pages `guis/<n>1.GUI`, `guis/<n>2.GUI`, … up to the
+first missing one, every button gadget carrying the product-slot attribute
+(`commonattribs` bit 4) whose name resolves to a definition, in page and
+gadget order. A slot that a download record patches is skipped, since the
+record's product replaces its name; page 0 is the orders state and installs
+none, and a page that does not parse installs nothing. The Modern AI's unit
+table appends these products to the rule's membership, each once, so they are
+candidates for every layer that reads a builder's products. Mission
+restrictions prune the list with the others; a definition a restriction
+removes has no table entry.
+
+**Identity.** Only the Modern AI reads the list, so the frozen content
+identity carries it as the AI-family entry `modern/installed-products`,
+present when a computer row chose the Modern AI
+([DESIGN_MULTIPLAYER §8.7](DESIGN_MULTIPLAYER.md#87-frozen-content-and-build-contracts-for-u4u5)).
+A battle without one keeps the identity, and the replays, it had.
+
+**Boundaries and verification.** No random draw, resource charge, rule seam
+or saved state is added; the table is rebuilt from the battle catalog.
+Classic players and the HUD never read the list, so no fingerprint lock
+moves. Tests: `content.TestInstalledProductsReadAuthoredPages` (product
+gadgets on authored pages, with patched slots, page 0, pages after a gap,
+order buttons, unmarked and unresolved names excluded),
+`content.TestFrozenInputsCarryInstalledProductsForModernAI` (the entry joins
+the identity only with a Modern computer) and
+`aikit.TestTableAddsPageInstalledProducts` (the table appends them after
+the membership, once, under every rule).
+
+#### Modern AI walls
+
+**Nanolathe Modern AI policy, user-authorized 2026-10-20** (a play-test:
+the Modern AI never built walls, and its army stood at a human's dragon's
+teeth being shot instead of breaking through; the user asked for both, a
+constructor sent to reclaim the wall included). Like the other Modern AI
+policies it applies in every gameplay mode, including Strict 3.1, uses only
+orders a human has, and adds no rule seam.
+
+**Baseline.** The retail planner zeroes the score of every `isfeature`
+product, so a Classic computer never builds a wall [08 R-P0-05 §5]. A
+finished wall piece is a feature. A projectile that strikes it bursts at
+its face, and the piece takes the weapon's default damage only when the
+impact lies closer to its centre than half the authored area of effect
+[05 R-FEAT-01 §8][06 §13.1]. A two-cell piece's centre lies 16 to 23 wu behind the
+face, so small arms (an area of 8) never harm a dragon's tooth, light
+cannons (32) harm it at about half their rate, and rockets, plasma and
+missiles (48) in full. Reclaiming a feature costs a fixed amount of work
+taken from its metal and energy, whatever the builder's power [05 R-WORK-01
+§5]: under a second for a dragon's tooth.
+
+**Seeing walls.** A brain names up to eight points a think where its own
+units stand (`Kit.WatchWalls`). When that think's batch is applied, the
+executor lists in `Obs.Walls` every finished feature of a wall product
+within `WallRadius` (384 wu) of one of them, once each, at its footprint
+centre. A wall product is an unarmed, immobile land product that finishes
+as a solid feature and is no economy, factory or sensor building
+(`aikit.WallPiece`, read from authored keys). A map feature has no owner,
+so a piece within 320 wu of an own or allied building counts as ours and
+is never broken.
+
+**Breaking through (`walls`, tactics).** An engaged ground squad watches
+around its centre and its member nearest the target. It is held when the
+members within 160 wu of a piece that is not ours are worth a quarter of
+its present value and that front member has come no 96 wu nearer the
+target for 300 − 2 × skill ticks (260 at Easy, 130 at Hard). A held squad:
+- fires at one piece by attacking the ground at its centre, with the members
+  whose weapons damage walls (above) within their range of it plus 120 wu.
+  The piece is the one nearest the members at the wall that does not lie
+  behind them, its distance raised by the enemy's static fire reaching it
+  in proportion to the squad's own, and halved beside the piece that fell
+  last, so the breach opens where towers cover least and an opening widens;
+- sends the members that cannot damage the wall and stand in enemy fire
+  within 460 wu of it 300 wu back behind the piece until it falls;
+- asks the economy for a constructor (`Board.BreachX`);
+- pulls back and cools the target as a lost engagement once its square-law
+  strength has fallen to half what it was when it was first held, or after
+  90 s without a piece falling.
+
+When a watched piece is gone from the list the breakers patrol on to the
+target. A squad still held after that picks the next piece; one that is
+no longer held for 10 s stops counting as walled. Focus fire is off while a
+squad is walled.
+
+**The constructor (economy).** While the army's request is no older than
+90 ticks, one constructor goes to the piece (`Kit.Breach`). It
+reclaims the wall pieces within 48 wu, nearest first, with ordinary Reclaim
+orders. It is the cheapest reclaim-capable constructor (the nearest among
+equals), never the commander, and only while more than two constructors
+remain. It may be lost, so it does not turn home for the threat that sends
+other builders back, and it keeps its orders until they are done. Only one
+is out at a time and at most one every 60 s. It is called off once the
+army has asked nothing for 15 s.
+
+**Building walls (`wall_build`, `wall_from`, economy).** With the defense
+plan, from minute `wall_from` (12), a tower that serves the ground plan in a
+zone enemy ground forces have approached gets one segment. The tower is a
+ground tower, or a missile tower under the front rules. The segment is
+three touching pieces across the zone's observed approach, 96 wu in front
+of the tower; neighbours stand a piece's width apart along the line's
+larger axis, so diagonal pieces touch without overlapping on the grid.
+The tower nearest the enemy goes first, and a tower is never tried twice.
+Pieces keep off the corridors the army's own units walk and out of passes.
+`Kit.BuildExact` refuses a blocked site, a factory lane, an allied tower's
+space or a metal spot rather than move the piece, and a segment needs two
+sites. Towers stand at least 160 wu apart, so neighbouring segments leave
+a corridor. Only an idle constructor, or one helping a build, builds a
+segment: the nearest to the tower. The cheapest wall piece it makes is
+used, while the stores or 90 s of income pay for three. There is one
+segment every 90 s. A think whose action budget cannot order every piece
+queues the rest on the same constructor on later thinks, while it keeps
+the job.
+
+**Boundaries.** No random draw, simulation state or rule seam is added; the
+breach and wall orders are a human's attack-ground, reclaim and build.
+`Kit.Breach` is command kind 21 of the Modern checkpoint vocabulary
+([DESIGN_MULTIPLAYER §16.3.23](DESIGN_MULTIPLAYER.md#16323-u5-typed-intent-and-order-receipt-codecs)).
+Survival's computer survivors keep both switches off: the survival layer
+plans its own wall segments ([DESIGN_SURVIVAL](DESIGN_SURVIVAL.md)), and no
+wave stands behind a wall. Classic players are unchanged, so no Classic
+fingerprint lock moves.
+
+**Verification.** `aikit.TestWallsListedNearWatchedPoints`,
+`aikit.TestBreachReclaimsTheWallPiecesThere`,
+`aikit.TestWallPieceReadsAuthoredKeys`,
+`tactics.TestWallDamageFollowsTheBurst`,
+`tactics.TestBreachPieceAvoidsTowerFire`,
+`tactics.TestHeldSquadBreaksTheWall`,
+`utility.TestBreachSendsOneConstructor` and
+`utility.TestWallSegmentCrossesTheApproach`.
+
+#### Modern AI profile bans
+
+**Nanolathe Modern AI policy, user-authorized 2026-10-21 (issue #148).**
+The Modern AI does not build an economy producer that the content's
+default AI profile (`ai/default.txt`) limits to none under every
+difficulty. Economy producers are extractors, energy producers, metal
+makers and storage. Like the other Modern AI policies, it applies in every
+gameplay mode, including Strict 3.1. It extends the per-player controller
+exception, not the rule registry.
+
+**Why.** Content can ship a unit only so that old recordings play back, and
+forbid it to every computer player through its AI profiles. TA Unofficial
+Patch 3.9.02 adds the four McnTerra-NS units (QUARK, FLUXOR, ACKFUS and
+ARMAIVP) to the build menus this way. Its `ai/default.txt` limits them to
+none in the easy, medium and hard plans. QUARK and FLUXOR build in one tick
+and yield 25–30 metal and 500–600 energy per second. A Modern AI that took
+the menus as offered chose them over every stock producer. In five-minute
+skirmishes of two Modern AI players on three maps, each player held 5–13 of
+them, and its economy ran away.
+
+**Classic baseline.** Unchanged. The retail planner honours every limit of
+its map's profile under its difficulty's plan `[08 R-AI-01 §12]`. It never
+reads the Modern AI's table.
+
+**Which limits.** Only the content-wide ones.
+
+- A map's own profile tunes the planner for that map, and its limits of
+  none cover stock producers: `waterwrld` limits the land extractors and
+  power plants, `metal` the metal makers, and `acid` the tidal and
+  underwater economy.
+- One plan's limits tune one difficulty: the default profile's easy plan
+  limits the cloakable and underwater fusion plants.
+
+The Modern AI reads the map itself and takes its difficulty from its
+persona, so it honours neither kind of limit. A producer is banned when, for
+each of easy, medium and hard, that difficulty's plan or the `any` plan of
+the default profile names it, and each plan that names it limits it to 0.
+The limit directive applies only to computer slots `[08 R-AI-01 §12]`, and a
+Modern player always is one.
+
+- On a 3.1 install this bans only the geothermal plants (ARMGEO, CORGEO),
+  which no Modern brain builds.
+- With TA Unofficial Patch 3.9.02 it also bans the four McnTerra-NS units,
+  on every map.
+
+**Decision.** When it builds the table, `banForbidden` marks those
+producers and takes them out of every build list. The Modern AI then plays
+as if the content's menus did not offer them, as with a definition that a
+restriction of 0 removes from the battle catalog. Should a layer reach a
+marked product another way, `Kit.Allowance` answers 0 for it and the kit
+never emits a placement, factory or replacement request for it.
+
+**Boundaries and verification.** Only economy producers are banned. The
+profiles' other limits of none (walls, which Survival builds, nukes,
+anti-nukes, transports) are left to the Modern AI, which is meant to use
+every unit. No random draw, resource charge, rule seam or saved state is
+added. The marks are derived from the battle catalog, which every client of
+an online room shares, and a load rebuilds them with the host's table.
+Classic players never read the table.
+
+Tests:
+
+- `aikit.TestModernAIProfileBans`: the table bans what every difficulty
+  limits to none, through each difficulty's plan or the `any` plan, and
+  nothing one plan limits alone, nothing limited above none and no other
+  role. No build list holds a banned product, it has no allowance, and it is
+  never requested.
+- `aikit.TestModernAIHonoursProfileBansRetail`: over the retail default
+  profile the table bans the geothermal plants and no stock producer. With
+  Arm's solar and wind plants limited to none in a cloned catalog's default
+  profile, no build list offers them, and Arm's Modern player never holds
+  one in a skirmish where it otherwise builds them.
+
+On a TA Unofficial Patch install, `aikit.TestModernAIMeetsRestrictionCapsRetail`
+and `aikit.TestSurvivalBuddyMeetsItsOwnCapRetail` pass with the ban. They
+failed there on the runaway economy.
 
 #### Modern AI damage hints
 
@@ -2893,6 +3287,207 @@ moved on; under Strict 3.1 the pair never links),
 `utility.TestGatesDialSendAndMoveOn`, `utility.TestGatesFailWhenNothingIsCarried`
 and `aikit.TestModernAIUsesATalonGatePairRetail` (the util+tac brain dials a
 standing pair, sends its army through and a unit is carried).
+
+### Modern chosen start positions
+
+**Nanolathe Modern policy (user-authorized 2026-10-18).** A skirmish player
+may choose the start position its commander begins on. Modern and Community
+3.9 honour the choice; Strict 3.1 keeps retail's placement, so its setup
+screen offers none, its battle entry ignores one a setup still carries, and
+its configuration refuses one. The decision is `SeatRules.ChosenStarts`
+(`StrictSeats` false, `ModernSeats` true; Community 3.9 binds
+`ModernSeats`). It adds no simulation random draw and no per-tick state, and
+a setup in which nobody chooses places every commander exactly as retail
+does in every mode, so every fingerprint lock is unchanged.
+
+**Retail behaviour.** Skirmish battle entry gives each eligible slot a stored
+start number: the slot's own under fixed starts, and a cyclic permutation of
+the eligible slots from the loading CRT walk under random starts; a stored
+number the map lacks is the verbatim missing-start fatal
+`[08 R-ENTRY-01 §5]` `[08 "Randomization for skirmish starts"]`.
+
+**Policy.** `SkirmishPlayer.Start` is a `StartPoint`: unset (Auto), or a
+point on the map in world pixels, the units the map's own `StartPos` records
+use, where the player put its commander in the setup screen's Place Starts
+window. `Validate` refuses coordinates outside `0..StartPointLimit`. When
+at least one eligible slot chose a point, `skirmishStartAssignment`
+replaces retail's step:
+
+1. Each slot that chose a point begins there. Every authored start within
+   `chosenStartClaim` (24 cells, 384 world pixels) of a chosen point is
+   claimed by it before the remaining starts are assigned.
+2. The others share the authored starts left, by the Location word.
+   **Fixed:** each keeps its own number when that start exists and is
+   unclaimed; the rest take the lowest free starts in slot order.
+   **Random:** the lowest free starts, one per remaining slot, are dealt by a
+   Fisher–Yates shuffle on the same disposable loading CRT the retail walk
+   uses; the simulation stream is not read. Too few free starts is this
+   build's error.
+3. Battle entry moves each chosen point onto the map and to the nearest
+   cell, ring by ring out to 48 cells, where the commander passes the spawn
+   command's placement checks — its movement class's slope and water
+   limits, its footprint and the units and features already there
+   (`chosenStartPosition`, in the same ring and within-ring order Survival's
+   spawns use). The search also excludes reserved commander footprints:
+   every assigned authored commander is reserved before allocation, and
+   each chosen or generated commander's resolved footprint joins the
+   reservations in slot order. An authored commander keeps its exact point
+   even when allocated later, so relocation beyond the original click's
+   claim cannot put a chosen commander on top of it. Two players who chose
+   one point begin side by side. Reservations change no world state, RNG
+   draws, resource effects or commander allocation order; a setup without
+   chosen or generated starts keeps retail's placement. No cell within
+   reach is this build's error.
+
+The Modern AI is told the start owners (`ai.Manager.StartOwners`) under fixed
+starts when nobody chose a point; a chosen point is not an authored start,
+and an unpublished owner reads as an empty start, so such a battle publishes
+nothing and every Modern controller searches. Survival places its own
+commanders (DESIGN_SURVIVAL §4.2) and clears any row's choice. The Community
+schema's random-start exchange of the last human and computer
+(DESIGN_COMMUNITY_PATCH §4.5) skips a slot that chose, and a chosen point
+takes no authored start, so no schema placement replaces its commander.
+
+**Where the choice travels.** The setup screen's Place Starts window
+(DESIGN_INTERFACE_HUD_INPUT §2.6 "Start positions") and the settings file
+(`start` per row with the map the points were placed on, `startMap`) carry
+it to `skirmishConfigForStart`, which keeps it with its row through the
+compaction; a point belongs to its map, so any change of the setup's map,
+including the fallback after the selected downloaded map is deleted, clears
+the points, and a settings file whose points name another map loads them as
+Auto. Replays carry it as required extension 17 of configuration version 2
+(DESIGN_MULTIPLAYER §8.6); a configuration with no choice keeps its
+existing version-2 bytes and identity. A save needs none: the bank already holds the
+commanders where they stand. The online lobby offers no control for it; a
+seat's choice would need a relay seat message.
+
+**Tests:** `TestStrictIgnoresChosenStarts` (the seam's answers, Strict's
+bypass with retail's draws, and a Strict configuration's refusal),
+`TestUnchosenStartsKeepRetailPlacement` (identity and the CRT walk, with
+retail's draw count), `TestChosenPointsUnderFixedLocation` (a point claims
+the authored start beside it), `TestChosenPointsUnderRandomLocation` (the
+deal replayed from the CRT definition),
+`TestChosenPointsRefuseWhatTheMapCannotSeat`, `TestChosenPointPlacesTheCommander`,
+`TestChosenRelocationAvoidsLaterAuto` (terrain relocation onto a later Auto
+start, full footprint separation with shared chosen points, and unchanged
+simulation draws, retained CRT and resources),
+`TestStartReservationsLeaveRetailPlacementUnchanged` (ordinary Modern and
+Strict's bypass retain exact authored positions),
+`TestChosenStartsEncodeAsConfigurationVersion2`,
+`TestChosenStartsRoundTripTheLocalAdapter`,
+`TestTheSettingsFileKeepsEachRowsStartPoint`, `TestPlaceStartsFollowsTheRules`
+and, on the retail art, `TestSkirmishScreenPlacesStartsOnTheMapRetail`, which
+places a player through the window's own clicks and composes the screen's
+battle under Strict 3.1 (retail's starts) and Modern (the chosen commander
+within a few cells of the click).
+
+### Modern extra start positions
+
+**Nanolathe Modern policy (user-authorized 2026-10-18).** A skirmish may
+seat more players than its map has start positions. Retail refuses such a
+setup at Start with `There are too many players enabled for this map`, and
+its battle entry treats a missing start as fatal `[08 R-ENTRY-01 §5]`;
+Strict 3.1 keeps both. Modern and Community 3.9 seat the extra players at
+generated starts (`SeatRules.ExtraStarts`: `StrictSeats` false,
+`ModernSeats` true). Of the 99 stock multiplayer maps, 97 author ten start
+positions, Luschinfloggen six and one thirteen, so the policy matters mostly
+for eight players on Luschinfloggen and for downloaded maps with few starts.
+
+**Policy.** Whatever retail can place is placed as retail places it, draws
+included, so a setup within the map's starts is unchanged. Then:
+
+1. A slot whose retail start the map lacks takes the lowest authored start
+   no slot holds, in slot order (`reassignMissingStarts`). With chosen
+   points (DESIGN_SESSIONS_AI_SAVE "Modern chosen start positions"), the
+   players the free authored starts do not cover are the extra ones: under
+   fixed starts the last in slot order, under random starts dealt together
+   with the free starts by the same Fisher–Yates shuffle.
+2. Each slot still without a start gets a generated one, in slot order
+   (`generateExtraStarts`): 32 cells drawn from the disposable loading CRT
+   over the usable terrain, four cells in from its edges, are kept when they
+   lie in the largest connected region of the commander's movement class,
+   so no player begins cut off from the rest of the map, and are tried
+   farthest first from every start already decided — authored, chosen or
+   generated — taking the first whose nearest cell in that region passes the
+   spawn command's placement checks. With no candidate in the region the
+   region's cell nearest the map centre is tried; no cell at all is this
+   build's error. Candidate searches exclude the assigned authored
+   commanders' reserved footprints and earlier generated footprints, so
+   terrain relocation cannot select a later Auto commander's cell.
+3. The generated start joins the chosen points, and battle entry creates
+   the commander on the nearest standable cell as it does for those,
+   excluding every authored commander and each earlier resolved commander
+   by its full footprint, including when chosen and generated starts mix.
+
+The simulation stream is not read, and the same seed generates the same
+starts. A battle with a generated start publishes no start owners to the
+Modern AI, as one with a chosen point does not. The setup screen's Start
+preflight drops its too-many-players refusal under these rules. The policy
+is single-player only: an online battle keeps kind 3's retail answer to a
+missing start, the jittered point it draws for every commander
+`[08 R-ENTRY-01 §5]`, and its lobby keeps its own capacity, the map's start
+positions (DESIGN_MULTIPLAYER §6.6).
+
+**Tests:** `TestExtraStartsReuseUnusedStartsThenGenerate` (unused authored
+starts first, then generation, and retail's assignment without the policy),
+`TestExtraPlayersBeginAtGeneratedStarts` (four players on a two-start
+synthetic map: the generated starts are apart from every other, repeat with
+the seed, and Strict 3.1 keeps the missing-start fatal),
+`TestGeneratedStartsAvoidLaterAuto` (a region-centre fallback beside a later
+Auto commander, with and without chosen starts) and, on the retail
+corpus, `TestEightPlayersOnASmallMapRetail` (eight players on Luschinfloggen:
+Strict's preflight refuses, Modern composes eight commanders at least 128
+pixels apart, the same with the same seed).
+
+### Modern allied sight
+
+**Nanolathe Modern policy (user-authorized 2026-10-18).** Allies may share
+line of sight, radar and the explored map, chosen per battle: the skirmish
+setup screen's Allied Sight option for a single-player skirmish, the online
+lobby host's for an online skirmish (DESIGN_MULTIPLAYER §6.7 "Allied
+sight"). Modern and Community 3.9 honour the choice; Strict 3.1 keeps
+retail's separate sight in a single-player skirmish, which never merges an
+ally's current sight `[03 §3.2]` `[03 R-VIS-01 §7]`, and the approved online
+policy's shared sight in an online room, so neither screen offers the
+choice there, battle entry and load ignore it, and the configuration
+refuses it. The decision is `SeatRules.AlliedSightChoice` (`StrictSeats`
+false, `ModernSeats` true). It adds no random draw or per-tick state, and a
+battle without the choice is unchanged in every mode, so every fingerprint
+lock is unchanged. Survival's survivors always share (DESIGN_SURVIVAL §4.3).
+
+**Policy.** `SkirmishConfig.AlliedSight` makes each team one side through
+the vision-team mechanism Survival and online teams already use
+(`visibility.Service.SetVisionTeam`): a member's coverage reaches every
+member's grids, its explored-map bit every member's history, radar and sonar
+from any member's units reveal contacts for all, members' units are friendly
+and members' jammers do not blind each other. `setAlliedVisionTeams` reads
+each team from the alliance table — the mutual allies of each existing,
+non-observer player, which in a skirmish are exactly the players sharing an
+ally group other than 5 `[08 R-SKIR-01 §2]` — once at battle entry, before
+any coverage is published. A player alone in its group joins no team.
+Single-player alliances cannot change in battle, so the teams and the
+coverage reference counts stay balanced. The computer players' sight
+predicates read the same grids, so a Classic or Modern ally sees what its
+team sees.
+
+**Where the choice travels.** The setup screen's button (DESIGN_INTERFACE_HUD_INPUT
+§2.6 "Allied sight") and the settings file (`alliedSight`, omitted when off)
+carry it to the setup. Replays carry it as required extension 18 of configuration version
+2 (DESIGN_MULTIPLAYER §8.6), whose zero value keeps version 1's rule, so a
+battle without it keeps its existing version-2 bytes. A save records it in the
+sidecar (`alliedSight`, DESIGN_MODS_MUTATORS §7.2): the bank keeps the
+alliance rows but not the ally groups `[08 R-SKIR-01 §2]` "Save
+persistence", so the load rebuilds the teams from the restored rows before
+the restored units publish coverage. A campaign takes none.
+
+**Tests:** `TestAlliedSightTeamsFollowTheAllianceTable`,
+`TestAlliedSightIsRequiredExtension18`,
+`TestAlliedSightSharesATeamsSightRetail` (a three-player battle on Ashap
+Plateau: under Modern the human sees its teammate's commander only with the
+option, under Strict 3.1 never, and never the opponent's; also after a
+Modern save and a load with and without the sidecar flag), `TestTheSettingsFileKeepsAlliedSight`,
+`TestOnlineLobbyHostChoosesAlliedSight` and, on the retail art,
+`TestSkirmishScreenSharesAlliedSightRetail`.
 
 ## 6. Research map
 

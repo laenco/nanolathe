@@ -98,7 +98,8 @@ func TestCheckpointHandlersLiteralVectorAndPosition(t *testing.T) {
 		if err := e.Err(); err != nil {
 			t.Fatal(err)
 		}
-		// ownedHandlers precedes the patrol pause and two empty sequence counts.
+		// ownedHandlers precedes the absent patrol work state and two empty
+		// sequence counts.
 		baseline := empty.Bytes()
 		payload := append([]byte(nil), baseline[:len(baseline)-10]...)
 		payload = append(payload, want...)

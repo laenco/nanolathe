@@ -42,9 +42,7 @@ func (t *table) build(k *aikit.Kit) {
 		d := &t.d[i]
 		// A conversion product can finish as decoration or disappear. Only
 		// an authored solid feature provides defence (DESIGN_SURVIVAL §16.8).
-		f := u.FinishedFeature
-		if def.IsFeature && u.DPS == 0 && land && f != nil && f.Blocking && f.FootprintX > 0 && f.FootprintZ > 0 && (f.Damage > 0 || f.Indestructible) &&
-			!u.Role.Any(aikit.RoleEnergy|aikit.RoleExtractor|aikit.RoleMetalMaker|aikit.RoleStorage|aikit.RoleFactory|aikit.RoleRadar|aikit.RoleSonar|aikit.RoleJammer) {
+		if aikit.WallPiece(u) {
 			d.wall = true
 			continue
 		}

@@ -163,6 +163,7 @@ func runMatch(args []string) error {
 	metal := fs.Int("metal", 0, "starting metal (default skirmish 1000)")
 	energy := fs.Int("energy", 0, "starting energy (default skirmish 1000)")
 	root := fs.String("root", "", "content root")
+	modSelector := fs.String("mod", "", "installed mod to mount as the last content root with its own config's content section, <id>, <id>@<version> or none (docs/DESIGN_MODS_MUTATORS.md §4.3); the match keeps the arena's rule set")
 	cpuProfile := fs.String("cpuprofile", "", "write a CPU profile of the match")
 	pace := fs.Int("pace", 0, "pace to this many ticks per wall second (30 = real time)")
 	memProfile := fs.String("memprofile", "", "write an allocation profile after the match")
@@ -183,6 +184,16 @@ func runMatch(args []string) error {
 	req := headless.ArenaRequest{Map: *mapName, Seed: uint32(*seed), MapSeed: !*rawSeed, Starts: headless.ArenaStarts(*starts), Score: headless.ArenaScore(*score), TickLimit: uint32(*ticks), Gameplay: gameplay.Mode(aikitmod.ArenaSet), StartMetal: *metal, StartEnergy: *energy, Log: os.Stderr}
 	if *root != "" {
 		req.Root = *root
+	}
+	roots, section, notice, err := resolveArenaMod(*modSelector, *root)
+	if err != nil {
+		return err
+	}
+	if notice != "" {
+		fmt.Fprintln(os.Stderr, "ai-arena: "+notice)
+	}
+	if roots != nil {
+		req.Root, req.Roots, req.Content = "", roots, section
 	}
 	req.Level = headless.ArenaLevel(*level)
 	switch *income {

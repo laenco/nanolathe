@@ -77,8 +77,9 @@ func TestConstructorCheckpointRejectsUndiscoveredWorkAssignment(t *testing.T) {
 	}
 }
 
-// A return receipt and a route-wide pause affect future borrowing even when
-// the ordinary move rows and their targets have identical values.
+// A return receipt and the failed-target memory affect future borrowing even
+// when the ordinary move rows and their targets have identical values
+// (DESIGN_UNITS_ORDERS_COB "Smarter patrol — 2026-10-22").
 func TestConstructorCheckpointPatrolReturnState(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -86,8 +87,15 @@ func TestConstructorCheckpointPatrolReturnState(t *testing.T) {
 	}{
 		{"return reference", func(_ *Queue, work, ret *Node) { work.workReturn = ret }},
 		{"return provenance", func(_ *Queue, _, ret *Node) { ret.patrolReturn = true }},
-		{"return arrival", func(_ *Queue, _, ret *Node) { ret.patrolReturnArrived = true }},
-		{"route pause", func(q *Queue, _, _ *Node) { q.patrolWorkPaused = true }},
+		{"remembered feature", func(q *Queue, _, _ *Node) {
+			q.patrolWork.remember(patrolMemoryEntry{kind: patrolMemoryFeature, cx: 3, cz: 4})
+		}},
+		{"remembered unit", func(q *Queue, _, _ *Node) {
+			q.patrolWork.remember(patrolMemoryEntry{kind: patrolMemoryUnit, unit: &units.Unit{Handle: 9}, handle: 9})
+		}},
+		{"memory cursor", func(q *Queue, _, _ *Node) { q.patrolWork.next = 1 }},
+		{"scan cadence", func(q *Queue, _, _ *Node) { q.patrolWork.scanDue = 77 }},
+		{"work factory", func(_ *Queue, work, _ *Node) { work.workFactory = &units.Unit{Handle: 9} }},
 		{"exact anchor x", func(_ *Queue, _, ret *Node) { ret.GoalX += numeric.Fixed(1) }},
 		{"exact anchor y", func(_ *Queue, _, ret *Node) { ret.GoalY += numeric.Fixed(1) }},
 		{"exact anchor z", func(_ *Queue, _, ret *Node) { ret.GoalZ += numeric.Fixed(1) }},

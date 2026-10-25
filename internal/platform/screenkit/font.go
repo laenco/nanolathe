@@ -13,6 +13,7 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/nanolathe-gg/nanolathe/internal/film"
+	"github.com/nanolathe-gg/nanolathe/internal/i18n"
 )
 
 // Font is one bundled face uploaded as per-glyph mip chains.
@@ -98,13 +99,31 @@ type Style struct {
 	Align int
 	// Upper renders the run in capitals.
 	Upper bool
+	// Verbatim sets the text as given. Otherwise a run is first put into the
+	// selected interface language (internal/i18n): text the player
+	// typed, and lines Wrap already translated, set it.
+	Verbatim bool
+}
+
+// text is a run as it is set: translated unless verbatim, then in capitals
+// when the style asks.
+func (s Style) text(text string) string {
+	if !s.Verbatim {
+		text = i18n.T(text)
+	}
+	if s.Upper {
+		text = strings.ToUpper(text)
+	}
+	return text
 }
 
 // Measure is the advance width of a run in pixels.
 func (f *Font) Measure(text string, s Style) float64 {
-	if s.Upper {
-		text = strings.ToUpper(text)
-	}
+	return f.measure(s.text(text), s)
+}
+
+// measure is the advance width of a run already in its final spelling.
+func (f *Font) measure(text string, s Style) float64 {
 	scale := s.Size / f.face.Cap
 	w, prev := 0.0, rune(0)
 	for _, r := range text {
@@ -120,10 +139,8 @@ func (f *Font) Measure(text string, s Style) float64 {
 
 // Draw sets a run on its baseline at (x, y) and returns its width.
 func (f *Font) Draw(dst *ebiten.Image, text string, x, y float64, s Style) float64 {
-	if s.Upper {
-		text = strings.ToUpper(text)
-	}
-	w := f.Measure(text, s)
+	text = s.text(text)
+	w := f.measure(text, s)
 	switch s.Align {
 	case 1:
 		x -= w / 2
@@ -183,8 +200,14 @@ func (f *Font) run(dst *ebiten.Image, text string, x, y float64, s Style) {
 	}
 }
 
-// Wrap breaks text into lines no wider than width.
+// Wrap breaks text into lines no wider than width. The text is translated
+// whole, before it is broken, so the lines are in the interface language
+// already: set them Verbatim.
 func (f *Font) Wrap(text string, s Style, width float64) []string {
+	if !s.Verbatim {
+		text = i18n.T(text)
+		s.Verbatim = true
+	}
 	var lines []string
 	for _, para := range strings.Split(text, "\n") {
 		words := strings.Fields(para)
@@ -210,6 +233,7 @@ func (f *Font) Wrap(text string, s Style, width float64) []string {
 // height used.
 func (f *Font) DrawWrapped(dst *ebiten.Image, text string, x, top, width, leading float64, s Style) float64 {
 	lines := f.Wrap(text, s, width)
+	s.Verbatim = true
 	y := top + s.Size
 	for _, l := range lines {
 		f.Draw(dst, l, x, y, s)

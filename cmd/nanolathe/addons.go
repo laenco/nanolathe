@@ -4,7 +4,8 @@ package main
 // archives, hosted by Nanolathe and mounted with the base install at its
 // *.UFO tier, apart from the mod slot, so a player can enable them and still
 // select any mod. A fix add-on replaces the base patch archive and mounts
-// over the content add-ons; faction add-ons mount over the patch (§5.8).
+// over the content add-ons; model add-ons mount over the patch and faction
+// add-ons over those (§5.8).
 
 import (
 	"fmt"
@@ -55,36 +56,42 @@ type addonMount struct {
 	off   bool
 	notes []string
 	// factions are the archives of the mounted faction add-ons, presented
-	// under the running content's layout (factionLayout).
+	// under the running content's layout (addonExtraLayout).
 	factions map[string]bool
+	// models are the archives whose audited payload contains models only.
+	// They mount above the patch and below factions, under the same layout.
+	models map[string]bool
 }
 
-// factionLayout is the layout each extra archive mounts under: the running
-// content's for a faction add-on's archives, so a mod that renames the
-// retail directories reads the faction's files beside its own, and none for
-// every other add-on (§5.7, §5.8 "With a mod").
-func factionLayout(layout vfs.Layout, factions map[string]bool) func(string) vfs.Layout {
-	if len(layout.Names()) == 0 || len(factions) == 0 {
+// addonExtraLayout presents model and faction archives under the running
+// content's layout, so a mod that renames retail directories reads those
+// files beside its own (§5.7, §5.8 "With a mod").
+func addonExtraLayout(layout vfs.Layout, factions, models map[string]bool) func(string) vfs.Layout {
+	if len(layout.Names()) == 0 || len(factions)+len(models) == 0 {
 		return nil
 	}
 	return func(full string) vfs.Layout {
-		if factions[full] {
+		if factions[full] || models[full] {
 			return layout
 		}
 		return vfs.Layout{}
 	}
 }
 
-// addonExtraTier is the ExtraTier function a mount's faction archives use:
-// they mount one tier above the base patch, so a fix add-on that replaces
-// the patch stays below them, while loose host files keep the last word
+// addonExtraTier mounts model archives one tier above the base patch and
+// factions one above that, while loose host files keep the last word
 // (§5.7 "Layers and mounting", §5.8).
-func addonExtraTier(factions map[string]bool) func(string) (vfs.MountTier, bool) {
-	if len(factions) == 0 {
+func addonExtraTier(factions, models map[string]bool) func(string) (vfs.MountTier, bool) {
+	if len(factions)+len(models) == 0 {
 		return nil
 	}
 	tier := vfs.DefaultRetailMountPlan().GP3 + 1
-	return func(full string) (vfs.MountTier, bool) { return tier, factions[full] }
+	return func(full string) (vfs.MountTier, bool) {
+		if factions[full] {
+			return tier + 1, true
+		}
+		return tier, models[full]
+	}
 }
 
 // factionArchives are the archive paths of the faction add-ons in supplies.
@@ -100,27 +107,44 @@ func factionArchives(supplies []addonSupply) map[string]bool {
 	return out
 }
 
+// modelArchives are the archive paths of the audited model add-ons.
+func modelArchives(supplies []addonSupply) map[string]bool {
+	out := map[string]bool{}
+	for _, s := range supplies {
+		if s.layer == layerModel {
+			for _, p := range s.addon.Paths {
+				out[p] = true
+			}
+		}
+	}
+	return out
+}
+
 // addonLayer orders the add-on kinds a mount stacks: content add-ons mount
 // at their archives' tiers, a fix add-on replaces the base patch archive and
-// so mounts over them, and faction add-ons mount over the patch, so a fix
-// never shadows one (§5.7 "Layers and mounting", §5.8).
+// so mounts over them, models mount over the patch, and factions above those
+// (§5.7 "Layers and mounting", §5.8).
 type addonLayer int
 
 const (
 	layerContent addonLayer = iota
 	layerFix
+	layerModel
 	layerFaction
 )
 
 // addonLayerOf is the layer an add-on's archives give it: a faction
 // declaration makes it a faction; otherwise a patch-tier revision archive
-// makes it a fix; anything else is content (§5.7).
-func addonLayerOf(addon addonlibrary.Addon, declared bool) addonLayer {
+// makes it a fix; otherwise an audited model-only payload makes it a model
+// add-on, and anything else is content (§5.7).
+func addonLayerOf(addon addonlibrary.Addon, declared, modelsOnly bool) addonLayer {
 	switch {
 	case declared:
 		return layerFaction
 	case addonlibrary.ReplacesBase(addon):
 		return layerFix
+	case modelsOnly:
+		return layerModel
 	default:
 		return layerContent
 	}
@@ -136,7 +160,8 @@ type addonCandidate struct {
 
 // resolveAddons decides which enabled add-ons a mount holds: none when the
 // running config sets content.addons false; each installed one otherwise,
-// except one already in the base folder, which the install supplies itself,
+// except one already in the base folder, which the install supplies itself
+// (a model pack still needs its model tier),
 // one that defines a unit or feature name the base or the mod defines at
 // another path (except a fix add-on, which repairs that content), and one
 // that supplies a logical path or defines a unit or feature name an add-on
@@ -183,21 +208,31 @@ func resolveAddons(opts Options, profile contentprofiles.Profile, baseRoots []st
 			continue
 		}
 		out.selection = append(out.selection, settings.AddonSelection{ID: addon.ID, Version: addon.Version})
-		if _, in := addonlibrary.InFolder(baseRoots[0], addon.Archives); in {
-			continue
-		}
 		factions, err := addonlibrary.Factions(addon)
 		if err != nil {
 			out.notes = append(out.notes, fmt.Sprintf("nanolathe: official add-on %s not mounted: %s", addon.Name, noticeReason(err)))
 			continue
 		}
-		candidates = append(candidates, addonCandidate{addon: addon, layer: addonLayerOf(addon, len(factions) > 0), factions: factions})
+		modelsOnly, err := addonlibrary.ModelsOnly(addon)
+		if err != nil {
+			out.notes = append(out.notes, fmt.Sprintf("nanolathe: official add-on %s not mounted: %s", addon.Name, noticeReason(err)))
+			continue
+		}
+		layer := addonLayerOf(addon, len(factions) > 0, modelsOnly)
+		// A selected model pack needs its model tier even when the base
+		// folder holds identical bytes: the ordinary UFO tier would leave
+		// those models below the patch. Extra replaces the folder copy at
+		// mount time (§5.7 "Layers and mounting").
+		if _, in := addonlibrary.InFolder(baseRoots[0], addon.Archives); in && layer != layerModel {
+			continue
+		}
+		candidates = append(candidates, addonCandidate{addon: addon, layer: layer, factions: factions})
 	}
 	if len(candidates) == 0 {
 		return out, nil
 	}
 	// The layer decides the mount order whatever the selection's order says:
-	// content add-ons, then a fix, then factions (§5.7 "Layers and mounting").
+	// content, fix, models, factions (§5.7 "Layers and mounting").
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].layer < candidates[j].layer })
 	addonsToCheck := make([]addonlibrary.Addon, 0, len(candidates))
 	for _, c := range candidates {
@@ -253,6 +288,7 @@ func resolveAddons(opts Options, profile contentprofiles.Profile, baseRoots []st
 	}
 	out.mounted = compilingAddons(profile, baseRoots, mod, accepted, &out.notes)
 	out.factions = factionArchives(accepted)
+	out.models = modelArchives(accepted)
 	return out, nil
 }
 
@@ -276,8 +312,8 @@ func compilingAddons(profile contentprofiles.Profile, baseRoots []string, mod *m
 			kept = append(kept, s.addon)
 		}
 	}
-	rehome := factionArchives(accepted)
-	if !factions || composeAddons(profile, baseRoots, mod, all, rehome) == nil || composeAddons(profile, baseRoots, mod, kept, rehome) != nil {
+	rehome, models := factionArchives(accepted), modelArchives(accepted)
+	if !factions || composeAddons(profile, baseRoots, mod, all, rehome, models) == nil || composeAddons(profile, baseRoots, mod, kept, rehome, models) != nil {
 		return all
 	}
 	for _, s := range accepted {
@@ -285,7 +321,7 @@ func compilingAddons(profile contentprofiles.Profile, baseRoots []string, mod *m
 			continue
 		}
 		trial := append(append([]addonlibrary.Addon(nil), kept...), s.addon)
-		if err := composeAddons(profile, baseRoots, mod, trial, rehome); err != nil {
+		if err := composeAddons(profile, baseRoots, mod, trial, rehome, models); err != nil {
 			*notes = append(*notes, fmt.Sprintf("nanolathe: official add-on %s not mounted: the game data does not compile with it: %s", s.addon.Name, noticeReason(err)))
 			continue
 		}
@@ -305,9 +341,9 @@ func compilingAddons(profile contentprofiles.Profile, baseRoots []string, mod *m
 }
 
 // composeAddons compiles the catalog of the base roots and the mod with
-// addons mounted as the start mounts them, factions' archives under the
-// layout.
-func composeAddons(profile contentprofiles.Profile, baseRoots []string, mod *modlibrary.Mod, addons []addonlibrary.Addon, factions map[string]bool) error {
+// addons mounted as the start mounts them, model and faction archives under
+// the layout.
+func composeAddons(profile contentprofiles.Profile, baseRoots []string, mod *modlibrary.Mod, addons []addonlibrary.Addon, factions, models map[string]bool) error {
 	replaced := map[string]bool{}
 	for _, a := range addons {
 		for _, archive := range a.Archives {
@@ -320,8 +356,8 @@ func composeAddons(profile contentprofiles.Profile, baseRoots []string, mod *mod
 		if i == 0 {
 			root.Archives = func(name string) bool { return !replaced[strings.ToLower(name)] }
 			root.Extra = addonExtras(addons)
-			root.ExtraLayout = factionLayout(profile.Layout(), factions)
-			root.ExtraTier = addonExtraTier(factions)
+			root.ExtraLayout = addonExtraLayout(profile.Layout(), factions, models)
+			root.ExtraTier = addonExtraTier(factions, models)
 		}
 		roots = append(roots, root)
 	}
@@ -356,10 +392,14 @@ type addonSupply struct {
 // (§5.8 isolation rules 1 and 2). Within a layer the add-on earlier in the
 // selection keeps its own, so the outcome follows the selection's order
 // alone. A fix add-on repairs the content add-ons mounted before it, so it
-// may replace theirs (§5.7).
+// may replace theirs. A model add-on may replace content and fix models;
+// its audit ensures it has no other paths or definitions (§5.7).
 func addonCollision(accepted []addonSupply, layer addonLayer, paths map[string]string, names addonlibrary.Names) error {
 	for _, prior := range accepted {
 		if layer == layerFix && prior.layer == layerContent {
+			continue
+		}
+		if layer == layerModel && prior.layer < layerModel {
 			continue
 		}
 		if shared := addonlibrary.SharedPath(paths, prior.paths); shared != "" {
@@ -524,8 +564,16 @@ func addonsSatisfied(cs *contentSet, want []addonIdentity, known []knownAddon) b
 func addonInFolder(cs *contentSet, w addonIdentity, known []knownAddon) bool {
 	for _, k := range known {
 		if k.id == w.id && k.version == w.version && addonlibrary.Digest(k.archives) == w.digest {
-			if _, in := addonlibrary.InFolder(cs.root, k.archives); in {
-				return true
+			if paths, in := addonlibrary.InFolder(cs.root, k.archives); in {
+				// A model UFO in the folder alone is below the patch. A
+				// restore must select its installed copy to regain the model
+				// tier; a revision archive already has its fix tier (§5.7).
+				addon := addonlibrary.Addon{Archives: k.archives, Paths: paths}
+				if addonlibrary.ReplacesBase(addon) {
+					return true
+				}
+				modelsOnly, err := addonlibrary.ModelsOnly(addon)
+				return err == nil && !modelsOnly
 			}
 		}
 	}

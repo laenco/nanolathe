@@ -94,6 +94,13 @@ func TestFactoryProductExcludedFromRepairRadius(t *testing.T) {
 				builder.Flags = builder.Flags&^(uint32(3)<<units.StandingMoveShift) | uint32(2)<<units.StandingMoveShift
 				id := orders.Lookup("RepairPatrol")
 				q.Push(id, orders.Node{Owner: builder.Handle, Phase: 1, GoalX: builder.X, GoalZ: builder.Z})
+				if mode == gameplay.Modern {
+					// The Modern score would otherwise prefer the damaged patient beside
+					// the builder to the product its factory is already building
+					// (DESIGN_UNITS_ORDERS_COB "Smarter patrol — 2026-10-22"); heal it so
+					// the product is the one candidate.
+					patient.Health = patient.Def.MaxDamage
+				}
 				before, crtBefore := s.SimRNG().Draws(), s.CrtRNG().Draws()
 				stock := s.Econ.Players[0].Stock
 				code := orders.DescriptorFor(id).Handler(builder, q.Head(), 0, 100)

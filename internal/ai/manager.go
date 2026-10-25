@@ -314,7 +314,7 @@ type Manager struct {
 	// battle. Only the Modern AI controller reads it, to build a Modern
 	// buddy's survival brain; a Classic buddy's step carries it dormant
 	// (docs/DESIGN_SURVIVAL.md "Computer survivors under the Modern AI").
-	// Survival battles cannot be saved, so nothing restores it.
+	// A load restores it with the director (session.restoreSurvival).
 	Survival *SurvivalInfo `json:"-"`
 }
 

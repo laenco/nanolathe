@@ -21,30 +21,39 @@ var toolsScreenInst *toolsScreen
 
 const unitViewerWidth, unitViewerHeight = 1200, 750
 
-// frontendScreens keeps both host screens behind the existing full-window
+// frontendScreens keeps the host screens behind the existing full-window
 // input boundary, including its release barrier on return to the retail menu.
 type frontendScreens struct {
-	settings *nlScreen
-	tools    *toolsScreen
+	settings  *nlScreen
+	tools     *toolsScreen
+	generator *mapgenScreen
 }
 
-func (s *frontendScreens) Active() bool { return s.tools.Active() || s.settings.Active() }
+func (s *frontendScreens) Active() bool {
+	return s.tools.Active() || s.generator.Active() || s.settings.Active()
+}
 func (s *frontendScreens) Update() {
-	if s.tools.Active() {
+	switch {
+	case s.tools.Active():
 		s.tools.Update()
-	} else if s.settings.Active() {
+	case s.generator.Active():
+		s.generator.Update()
+	case s.settings.Active():
 		s.settings.Update()
 	}
 }
 func (s *frontendScreens) Draw(dst *ebiten.Image) {
-	if s.tools.Active() {
+	switch {
+	case s.tools.Active():
 		s.tools.Draw(dst)
-	} else if s.settings.Active() {
+	case s.generator.Active():
+		s.generator.Draw(dst)
+	case s.settings.Active():
 		s.settings.Draw(dst)
 	}
 }
 func (s *frontendScreens) OwnsPointer() bool {
-	return !s.tools.Active() && s.settings.OwnsPointer()
+	return !s.tools.Active() && !s.generator.Active() && s.settings.OwnsPointer()
 }
 
 // The unfinished viewer is an unadvertised main-menu preview. Keep its host

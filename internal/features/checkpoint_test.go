@@ -86,7 +86,7 @@ func TestCheckpointFeatureVector(t *testing.T) {
 		Vy: numeric.Fixed(-(1 << 45) + 4), X: numeric.Fixed((1 << 42) + 1), Y: numeric.Fixed(-(1 << 43) + 2), Z: numeric.Fixed((1 << 44) + 3), cursor: eventCursor{delay: -4, frame: 7}}
 	s.instances[9] = inst
 	got := featureCheckpointBytes(t, s, c)
-	want, err := hex.DecodeString("0000000000000000" + "0100" + "0000000000000000" + "feffffffffffffff" + "01000000" + "0900000000000000" +
+	want, err := hex.DecodeString("0000000000000000" + "010000" + "0000000000000000" + "feffffffffffffff" + "01000000" + "0900000000000000" +
 		"02fdffffff01000000000000000100000000000000cdab00" + "05000000060000000000" + "34127856bc9a0101" +
 		"0400000000e0ffff01000000000400000200000000f8ffff0300000000100000" + "00fcffffff00070000000000" + "00000000")
 	if err != nil {

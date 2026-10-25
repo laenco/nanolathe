@@ -82,6 +82,38 @@ reproduction diagnoses that Nanolathe configuration; it does not establish the
 patch's enumeration order, special handling of zero, or duplicate semantics.
 Changing enumeration alone is not evidence of a complete compatibility fix.
 
+## CANBUILD entries left to the build pages
+
+**Established — artifact identity.** Switeck's TA Bugfix 1.7b6, as Nanolathe
+hosts it for the add-on `switecks-bugfix@1.7b6`, ships `rev31.gp3`
+(SHA-256 `ff05c360172c88ec02253a371c1d4c4515c75fc586de4029b55fab324ea537f3`),
+which replaces the retail patch archive of that name, and the readme
+`][BF17.txt` (SHA-256
+`308f75d35129acef31f1badc7711e19b65468bc7ffd9fd0e3eee17a4722d081e`).
+
+**Established — documented intent.** The readme's "SIDEDATA.TDF Changes"
+section calls the file the AI's build menus and says the author stripped it
+of every entry built by a downloads folder TDF file, since the AI reaches
+those units through that file.
+
+**Established — authored data.** The archive's `gamedata/sidedata.tdf`
+`[CORCV]` section lists sixteen products and neither `CORRAD` nor `CORDRAG`;
+its `guis/CORCV2.GUI` installs a `CORRAD` button gadget (`id=1`,
+`commonattribs=4`) and `guis/CORCV3.GUI` a `CORDRAG` one. The archive's
+`download/` directory holds four records (`ARMAWAC`, `ARMLATNK`, `CORAWAC`,
+`CORGANT`). With the archive mounted over the reference install, 34 of the 53
+compiled builder menus have page product gadgets that name definitions
+neither their CANBUILD nor any download record lists, among them both
+commanders' light laser tower and radar tower.
+
+- **Unknown — why base products are absent.** The readme's rule covers units
+  a download record builds; it does not say why base products such as
+  `CORRAD` are missing from CANBUILD, nor whether the retail planner was meant
+  not to build them. The author's change notes or a statement from the author
+  would settle it. Nanolathe's Modern AI reads the build pages
+  ([DESIGN_SESSIONS_AI_SAVE, Modern AI page products](../../docs/DESIGN_SESSIONS_AI_SAVE.md#modern-ai-page-products));
+  that is Nanolathe policy, not a patch contract.
+
 ## Unknown patch contracts
 
 - **Unknown — membership capacity.** Neither the bounded authored sample nor

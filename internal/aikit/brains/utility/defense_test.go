@@ -19,10 +19,11 @@ import (
 // AirDPS exceeds its DPS as aikit.BuildTable makes it for the stock one
 // (its anti-air is credited from its damage table; the same weapon fires
 // at ground units for its default damage); the flak gun's one weapon is
-// to-air, so its DPS and AirDPS are the same fire.
+// to-air, so its DPS and AirDPS are the same fire. The dragon's tooth, a
+// wall piece, is in no builder's list; a test that wants it adds it.
 type defUnits struct {
-	t                                                              *aikit.Table
-	com, con, llt, hlt, rl, flak, gun, amd, tl, fac, mex, sol, rad *aikit.UnitInfo
+	t                                                                    *aikit.Table
+	com, con, llt, hlt, rl, flak, gun, amd, tl, fac, mex, sol, rad, drag *aikit.UnitInfo
 }
 
 func newDefUnits() *defUnits {
@@ -54,6 +55,9 @@ func newDefUnits() *defUnits {
 	d.rad = mk("rad", aikit.RoleRadar, 50, 500, 100, 0, 0, 0)
 	d.flak = mk("flak", aikit.RoleDefense|aikit.RoleAntiAir, 823, 20000, 1524, 216, 216, 700)
 	d.flak.Def = &content.UnitDef{Weapon1Def: &content.WeaponDef{ID: 1, DamageDefault: 108, ReloadTime: 15, ToAirWeapon: true}}
+	d.drag = mk("drag", 0, 10, 250, 3500, 0, 0, 0)
+	d.drag.Def = &content.UnitDef{IsFeature: true}
+	d.drag.FinishedFeature = &content.FeatureDef{Blocking: true, Reclaimable: true, FootprintX: 2, FootprintZ: 2, Damage: 4000}
 	d.com.Builds = []*aikit.UnitInfo{d.llt, d.tl, d.mex, d.sol, d.fac}
 	d.con.Builds = []*aikit.UnitInfo{d.llt, d.hlt, d.rl, d.gun, d.amd, d.tl, d.mex, d.sol, d.fac, d.rad}
 	return d

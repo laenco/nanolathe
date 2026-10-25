@@ -360,7 +360,7 @@ func buildPieceDrawsDeferrable(m *model.Model, states []model.PieceState, worldP
 		record.DontCache = i < len(states) && states[i].DontCache
 		if scratch.hidden[i] {
 			// Keep the stable piece index while suppressing all authored geometry
-			// under a hidden piece [03 §2.4.1].
+			// of this hidden piece [03 §2.4.1]. Its children remain independent.
 			record.WorldVertices, record.Primitives, record.IsLeafAttachment = nil, nil, false
 			continue
 		}
@@ -496,13 +496,12 @@ func materializePiece(m *model.Model, i int, states []model.PieceState, worldPos
 	record.WorldVertices, record.Primitives, record.IsLeafAttachment = worldVerts, prims, isLeaf
 }
 
-// resolveHidden fills one hidden flag per piece: a piece is suppressed when it
-// or any ancestor is hidden [03 §2.4.1]. Resolving the whole model at once
-// costs one ancestor visit per piece; testing each piece independently walked
-// and erased a per-piece marker array, which is quadratic in the piece count.
+// resolveHidden applies each piece's own visibility [03 §2.4.1]. A hidden
+// transform parent still positions its independently visible descendants.
 //
-// A cyclic ancestor chain is malformed and every piece on it is suppressed,
-// rather than allowing a presentation walk to run forever.
+// Separately, Nanolathe suppresses malformed cyclic ancestor chains and their
+// descendants. Resolving the whole model costs one ancestor visit per piece.
+// This defensive policy is not a recovered retail cycle contract.
 func resolveHidden(m *model.Model, states []model.PieceState, hidden []bool, state []uint8, stack []int) {
 	const (
 		unresolved = iota
@@ -526,13 +525,7 @@ func resolveHidden(m *model.Model, states []model.PieceState, hidden []bool, sta
 				if s == visible {
 					break
 				}
-				// inProgress closes a cycle; suppressed is an already resolved
-				// hidden ancestor. Both suppress everything below.
-				result = suppressed
-				break
-			}
-			if cur < len(states) && states[cur].Hidden {
-				state[cur] = suppressed
+				// inProgress closes a cycle; suppressed reaches a known cycle.
 				result = suppressed
 				break
 			}
@@ -545,7 +538,7 @@ func resolveHidden(m *model.Model, states []model.PieceState, hidden []bool, sta
 		}
 	}
 	for i := range hidden {
-		hidden[i] = state[i] == suppressed
+		hidden[i] = state[i] == suppressed || (i < len(states) && states[i].Hidden)
 	}
 }
 

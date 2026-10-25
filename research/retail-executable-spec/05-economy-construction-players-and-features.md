@@ -7763,3 +7763,17 @@ body and are not restated here.
   proceeds against the `featurereclamate` successor is not traced
   · [R-WORK-01 §7], [R-FEAT-01 §5] · static trace of the transplant's
   cell re-read against a successor ordinal.
+- Whether a second reclaimer is credited while a sprite feature still plays
+  its reclaim sequence. The cell keeps its reclaimable definition until the
+  feature phase stamps the successor ([R-FEAT-01 §5], [R-FEAT-01 §10]), so a
+  second reclaim order keeps counting down. The payout guard refuses it when
+  the order's recorded cell is the anchor, whose instance-attached bit the
+  transition set; a multi-cell sprite reclaimed from a fringe cell reads that
+  fringe's clear bit instead and passes ([R-FEAT-01 §15]), so composing the
+  established payout steps would credit the definition's pools a second time
+  while the transition returns at step 4 with no effect. **Supported
+  inference** only: no observation confirms that play reaches it
+  · [R-FEAT-01 §15], [R-WORK-01 §5] · manual retail observation of two
+  builders finishing one multi-cell tree or rock inside its reclaim
+  sequence, the second ordered on a fringe cell, comparing both builders'
+  production; or a static trace for any further refusal on the payout path.

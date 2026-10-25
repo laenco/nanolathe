@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/nanolathe-gg/nanolathe/internal/addonlibrary"
 	"github.com/nanolathe-gg/nanolathe/internal/modfetch"
 	"github.com/nanolathe-gg/nanolathe/internal/modlibrary"
 	"github.com/nanolathe-gg/nanolathe/internal/platform/screenkit"
@@ -144,7 +146,7 @@ func TestNLScreenAddonSwitchPointer(t *testing.T) {
 	defer screen.Deallocate()
 	draw := func() {
 		s.hits.Begin()
-		s.heroAddons(screen, 100, 200, 1)
+		s.heroAddons(screen, 100, 200, 900, 1)
 		s.hits.End()
 	}
 	click := func(x, y float64) {
@@ -192,4 +194,37 @@ func mustModLibrary(t *testing.T) *modlibrary.Library {
 		t.Fatal(err)
 	}
 	return lib
+}
+
+// A model-only add-on is described as model replacements, without a unit
+// count or empty unit strip. The same row is used for a library copy and a
+// byte-identical copy in the base folder, which still needs the installed
+// selection for the model tier (§5.7).
+func TestNLScreenAddonRowDescribesModelReplacements(t *testing.T) {
+	dir := addonPackage(t, "models", "Models", map[string]string{"Objects3D/ARMCOM.3DO": "model"})
+	path := filepath.Join(dir, "models.ufo")
+	data := addonArchive(t, map[string]string{"Objects3D/ARMCOM.3DO": "model"})
+	archive := addonlibrary.Archive{Name: "models.ufo", Size: int64(len(data)), SHA256: sha256.Sum256(data)}
+	known := knownAddon{id: "models", version: "1", name: "Models", archives: []addonlibrary.Archive{archive}, installed: &addonlibrary.Addon{Paths: []string{path}}}
+	s := &nlScreen{}
+	for _, root := range []string{"", dir} {
+		rows := nlAddonRowsOf([]knownAddon{known}, root)
+		if len(rows) != 1 || !rows[0].models || len(rows[0].units) != 0 || rows[0].names != "" || rows[0].faction != "" || s.addonSubText(rows[0]) != "Model replacements" {
+			t.Fatalf("model row under %q: %+v", root, rows)
+		}
+		if rows[0].inFolder || rows[0].known.installed == nil {
+			t.Fatalf("model row under %q hides its installed switch: %+v", root, rows[0])
+		}
+	}
+	// Without the library copy, the catalogue still needs to offer Get so
+	// the model pack can be installed and selected at its layer.
+	known.installed = nil
+	known.entry = &modfetch.Entry{ID: "models", Name: "Models", Version: "1"}
+	rows := nlAddonRowsOf([]knownAddon{known}, dir)
+	if len(rows) != 1 || rows[0].inFolder || !rows[0].models || rows[0].known.installed != nil || rows[0].known.entry == nil {
+		t.Fatalf("folder-only model row hides Get: %+v", rows)
+	}
+	if text := s.addonsCard().desc(nil, 0); !strings.Contains(text, "model replacements") {
+		t.Fatalf("add-ons description %q", text)
+	}
 }

@@ -66,7 +66,7 @@ func TestResolveAddonsOrdersLayers(t *testing.T) {
 	}
 	fs := vfs.New()
 	defer fs.Close()
-	if err := fs.MountGameRoots([]vfs.GameRoot{{Dir: base, Extra: addonExtras(out.mounted), ExtraTier: addonExtraTier(out.factions)}}); err != nil {
+	if err := fs.MountGameRoots([]vfs.GameRoot{{Dir: base, Extra: addonExtras(out.mounted), ExtraTier: addonExtraTier(out.factions, out.models)}}); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := fs.ReadFile("units/aaa.fbi"); err != nil || !strings.Contains(string(data), "Fixed") {

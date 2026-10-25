@@ -25,8 +25,12 @@ import (
 // layer plans the ring), no scouts (there is no base to find), a compact
 // base, the balanced style, an
 // earlier tech-2 transition with more constructor/assistance weight and a
-// heavier cost-efficiency blend (the waves climb the build tree), and a
-// tactics army with no raiding, harassing or probing.
+// heavier cost-efficiency blend (the waves climb the build tree), a
+// tactics army with no raiding, harassing or probing, and neither the
+// skirmish's approach warning nor its radar over home: the director's
+// warnings already tell the survival layer where each wave comes from.
+// Nor the skirmish's walls: the survival layer plans its own segments, and
+// no wave stands behind a wall to break.
 var survivalDefaults = map[string]string{
 	"def_plan":    "0",
 	"w_scout":     "0",
@@ -44,6 +48,10 @@ var survivalDefaults = map[string]string{
 	"harass":      "0",
 	"probe":       "0",
 	"tour":        "0",
+	"warn":        "0",
+	"radar_home":  "0",
+	"wall_build":  "0",
+	"walls":       "0",
 }
 
 // survivalPlay reports whether manager m's controller plays the survival

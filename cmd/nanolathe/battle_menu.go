@@ -223,18 +223,18 @@ func (b *battleSession) activateBattleMenuButton(name string, cl *client.Client)
 	switch action {
 	case ui.BattleModalActionMainMenu:
 		if b.returnToMenu != nil {
+			b.shell.autosaveForExit()
 			b.ended = true
 			b.returnToMenu(cl)
 		}
 	case ui.BattleModalActionExitGame:
 		if cl != nil {
+			b.shell.autosaveForExit()
 			cl.RequestExit()
 		}
 	case ui.BattleModalActionSaveGame:
-		// A Survival battle is live only (docs/DESIGN_SURVIVAL.md §11).
-		if b.sess != nil && b.sess.IsSurvival() {
-			break
-		}
+		// A Survival battle saves too, its director in the sidecar
+		// (docs/DESIGN_SURVIVAL.md §11).
 		b.openBattleSaveLoadScreen(saveScreenMode)
 	case ui.BattleModalActionLoadGame:
 		b.openBattleSaveLoadScreen(loadScreenMode)

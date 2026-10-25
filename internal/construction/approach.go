@@ -329,8 +329,50 @@ func (s *Service) handleMobileApproach(builder *units.Unit, node *orders.Node, t
 		// dispatch, so re-arming it here would deliver a stale word.
 		return
 	}
+	if s.startsInReach(builder, node) {
+		s.retireApproachInReach(node)
+		return
+	}
 	s.ensureWalk(builder, node)
 	node.DynamicGate = orders.ApproachWakeGate
+}
+
+// startsInReach reports whether the Builder speed mutator lets this approach
+// visit retire the walk early (docs/DESIGN_MODS_MUTATORS.md "Builder speed").
+// Retail walks a mobile builder to the footprint border and asks the reach
+// expression only when the follower cannot get there [05 R-WORK-01 §12]
+// [05 R-WORK-01 §13]. A ground builder whose definition records the factor
+// instead starts as soon as that same expression passes — centre to centre,
+// both half-diagonal pads subtracted, signed compare against builddistance
+// [05 R-WORK-01 §2] — on any approach visit, provided its own footprint is
+// clear of the site, which the rectangle goal would otherwise walk it off
+// [04 R-PATH-01 §12]. A definition without the factor never takes this arm.
+func (s *Service) startsInReach(builder *units.Unit, node *orders.Node) bool {
+	if builder == nil || builder.Def == nil || builder.Def.BuilderSpeed.IsIdentity() {
+		return false
+	}
+	return !s.outOfReach(builder, node) && !s.mustClearSite(builder, node)
+}
+
+// retireApproachInReach is startsInReach's arm, and it keeps the arrival's
+// timing. On arrival the follower halts the builder in the movement step and
+// the record advances into placement on the next visit, when the pump hands
+// it the outcome [05 R-WORK-01 §13]. Here the release halts the builder in
+// this tick's movement step and the phase advance lets the next visit place.
+// Placing in this same visit would start StartBuilding before the halt's
+// StopMoving, whose immediate drain then runs both together: a stock
+// construction kbot that is still folding from its previous job holds six
+// script threads, and the eighth slot its request loop needs is taken
+// [04 §4.2][04 R-CB-01 §2]. The release raises the payload-release bit on
+// this record's own pending word; it is cleared again, because the arrival it
+// stands for is this visit's and no gate will ask for it.
+func (s *Service) retireApproachInReach(node *orders.Node) {
+	pending := node.Satisfied & approachWakeReleased
+	s.Movement.ReleaseGoalPayload(node)
+	node.Satisfied = node.Satisfied&^approachWakeReleased | pending
+	node.Phase = uint8(State2)
+	node.DynamicGate = 0
+	node.Deadline = -1
 }
 
 // mobileBuildWakeVisit is the row's phase-1 body, dispatched by the order pump

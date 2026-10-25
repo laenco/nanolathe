@@ -801,9 +801,11 @@ historical game behavior.
 transforms, textures, team-color bank and palette using the same source as
 battle rendering [03 §2.4][03 §2.4.1]. The definition selects
 structure shading (`BMCode == 0`); no unit-name special cases
-are added. A fixed fit radius encloses the centered bounds of the visible
-hierarchy's drawable vertices and parent translations, excluding hidden pieces,
-selection plates, undrawable primitives and attachment-only points. No terrain,
+are added. A fixed fit radius encloses the centered bounds of independently
+visible pieces' drawable vertices and parent translations. Each piece's own
+hide state excludes it; a hidden parent still positions its visible children
+[03 §2.4.1]. The fit also excludes selection plates, undrawable primitives and
+attachment-only points. No terrain,
 waterline or battle shadow is claimed. The viewer uses its isolated GPU model path under
 either battle renderer preference, without changing that preference. A missing
 model reports an error while its catalog entry and available statistics remain

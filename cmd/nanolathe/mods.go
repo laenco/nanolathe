@@ -631,10 +631,12 @@ func (h *shellHost) reload(request contentReloadRequest, cl *client.Client) {
 	old.releaseAudio()
 	// A settings preview staged while the main menu idled reads the old set's
 	// archives; wait for it, and stop the screen's picture loader, before they
-	// close. A reload from the screen itself has done this already.
+	// close. A reload from the screen itself has done this already. The map
+	// generator's panel closes too, joining the work that reads them.
 	if nlScreenInst != nil {
 		nlScreenInst.releasePreview(true)
 	}
+	closeMapGenerator()
 	_ = old.cs.Close()
 	h.shell = shell
 	modDownload.rememberMounted(shell.cs.mod)
@@ -1786,8 +1788,9 @@ func (g *gameShell) refreshMutatorsDialog() {
 	if ok {
 		f, _ := modsUI.mutators.Factor(info.Key)
 		description, value, factor = info.Description, info.Label, "x"+f.String()
-		retailGreyGadget(p.Window, "MUTRAISE", f.String() == content.MutatorSteps[len(content.MutatorSteps)-1].String())
-		retailGreyGadget(p.Window, "MUTLOWER", f.String() == content.MutatorSteps[0].String())
+		// Each mutator cycles on its own step list (Builder speed's differs).
+		retailGreyGadget(p.Window, "MUTRAISE", f.String() == info.Steps[len(info.Steps)-1].String())
+		retailGreyGadget(p.Window, "MUTLOWER", f.String() == info.Steps[0].String())
 		retailGreyGadget(p.Window, "MUTDEFAULT", f.IsIdentity())
 	}
 	retailGreyGadget(p.Window, "MUTRESETALL", modsUI.mutators.IsZero())
@@ -1801,12 +1804,12 @@ func (g *gameShell) refreshMutatorsDialog() {
 
 func (g *gameShell) activateMutatorsGadget(name string) {
 	info, ok := g.selectedMutator()
-	step := func(next func(content.Factor) content.Factor) {
+	step := func(next func(content.Factor, []content.Factor) content.Factor) {
 		if !ok {
 			return
 		}
 		f, _ := modsUI.mutators.Factor(info.Key)
-		_ = modsUI.mutators.SetFactor(info.Key, next(f))
+		_ = modsUI.mutators.SetFactor(info.Key, next(f, info.Steps))
 	}
 	switch name {
 	case "LOAD":
@@ -1816,11 +1819,11 @@ func (g *gameShell) activateMutatorsGadget(name string) {
 		g.closeMutatorsDialog(false)
 		return
 	case "MUTRAISE":
-		step(content.Factor.Next)
+		step(content.Factor.NextIn)
 	case "MUTLOWER":
-		step(content.Factor.Prev)
+		step(content.Factor.PrevIn)
 	case "MUTDEFAULT":
-		step(func(content.Factor) content.Factor { return content.Factor{} })
+		step(func(content.Factor, []content.Factor) content.Factor { return content.Factor{} })
 	case "MUTRESETALL":
 		modsUI.mutators = content.Mutators{}
 	}

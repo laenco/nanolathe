@@ -116,6 +116,13 @@ func TestHostedLobbyDescribeReadyAndStart(t *testing.T) {
 		if err := host.Start(); err != nil {
 			t.Fatal(err)
 		}
+		// The room handles each seat's frames in order, so the joiner
+		// reading this line proves the early start was handled before the
+		// joiner's ready. Seeing the host ready proves only the ready.
+		if err := host.SendChat(1<<1, "starting early"); err != nil {
+			t.Fatal(err)
+		}
+		awaitChat(t, joiner.DrainChat, HostedChatLine{Seat: 0, Text: "starting early"})
 		awaitLobby(t, joiner, "the host ready", func(s HostedLobbyState, err error) bool { return err == nil && s.Seats[0].Ready })
 		if err := joiner.SetReady(true, [32]byte{}, rehearsal); err != nil {
 			t.Fatal(err)

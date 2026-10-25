@@ -24,7 +24,7 @@ func (g *gameShell) drawRetailPanel(c *client.Client) {
 	}
 	if g.onlineLobbyActive() {
 		g.drawOnlineLobbyHelp(c)
-	} else if g.frontend.Mode == modeMenuSkirmish {
+	} else if g.frontend.Mode == modeMenuSkirmish && g.startPlacer == nil {
 		mouse, _ := c.Input().PointerSample()
 		g.updateHoverHelp(int32(mouse.X), int32(mouse.Y))
 	}
@@ -40,6 +40,9 @@ func (g *gameShell) drawRetailPanel(c *client.Client) {
 			mode = g.frontend.Mode
 		}
 		g.drawRetailWindow(c, mode, entry.Panel)
+	}
+	if g.startPlacer != nil && g.frontend.Mode == modeMenuSkirmish && g.frontend.Panels.Modal() == nil {
+		g.drawStartPlacer(c)
 	}
 }
 
@@ -737,6 +740,9 @@ func (g *gameShell) drawRetailSurface(c *client.Client, p *ui.Panel, index int, 
 			// cleared and centred canvas [07 R-FE-01 §5].
 			pixels := d.previewPixels(int(r.W), int(r.H))
 			c.UIBlitIndexed(pixels, int(r.W)-1, int(r.H)-1, int(r.X), int(r.Y), int(r.W)-1, int(r.H)-1)
+			// Nanolathe numbers the start positions so the setup screen's
+			// Start buttons can be read (skirmish_starts.go).
+			g.drawMapStartMarkers(c, p, d, r)
 		}
 		return
 	}

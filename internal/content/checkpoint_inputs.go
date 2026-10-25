@@ -224,6 +224,7 @@ func snapshotCheckpointInputs(in *SimulationInputs) *checkpointInputSnapshot {
 			v := *row.value
 			v.Buttons = slices.Clone(v.Buttons)
 			v.AuthoredButtons = slices.Clone(v.AuthoredButtons)
+			v.InstalledProducts = slices.Clone(v.InstalledProducts)
 			s.buildValues = append(s.buildValues, checkpointInputBuildMenu{row.key, row.value, v})
 		}
 	}
@@ -349,7 +350,7 @@ func (s *checkpointInputSnapshot) validate(in *SimulationInputs) error {
 	for _, v := range s.buildValues {
 		a := v.pointer
 		b := v.value
-		if !sameCheckpointInputHeader(a.DefinitionHeader, b.DefinitionHeader) || a.Builder != b.Builder || a.BaseButtonCount != b.BaseButtonCount || !checkpointInputSlice(a.Buttons, b.Buttons) || !checkpointInputSlice(a.AuthoredButtons, b.AuthoredButtons) {
+		if !sameCheckpointInputHeader(a.DefinitionHeader, b.DefinitionHeader) || a.Builder != b.Builder || a.BaseButtonCount != b.BaseButtonCount || !checkpointInputSlice(a.Buttons, b.Buttons) || !checkpointInputSlice(a.AuthoredButtons, b.AuthoredButtons) || !checkpointInputSlice(a.InstalledProducts, b.InstalledProducts) {
 			return bad("buildmenu/" + v.key)
 		}
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/nanolathe-gg/nanolathe/internal/construction"
 	"github.com/nanolathe-gg/nanolathe/internal/content"
 	"github.com/nanolathe-gg/nanolathe/internal/economy"
+	"github.com/nanolathe-gg/nanolathe/internal/features"
 	"github.com/nanolathe-gg/nanolathe/internal/gameplay"
 	"github.com/nanolathe-gg/nanolathe/internal/movement"
 	"github.com/nanolathe-gg/nanolathe/internal/orders"
@@ -53,6 +54,7 @@ type RuleSet struct {
 	Orders       orders.Rules
 	Construction construction.Rules
 	Economy      economy.Rules
+	FeaturePool  features.Rules
 	UnitLimit    UnitLimitRules
 	ScriptPorts  ScriptPortRules
 	// Movement is the movement system's policy seam: what a rejected step
@@ -109,6 +111,14 @@ type RuleSet struct {
 // units and hosted computers are destroyed or kept, which §15 Q6, Q26 and Q28
 // select with one answer for both halves — belongs to this interface too,
 // and is added here when M6 implements removal.
+//
+// It also answers the skirmish setup's seat questions, which battle entry
+// and the lobby ask before any tick: whether a player may choose where its
+// commander starts, whether players beyond the map's start positions begin
+// at generated starts, and whether the lobby may choose a team's shared
+// sight (docs/DESIGN_SESSIONS_AI_SAVE.md "Modern chosen start positions",
+// "Modern extra start positions", "Modern allied sight"). Strict 3.1 answers
+// as retail, which offers none of them.
 type SeatRules interface {
 	// ComputerSeatsPerHuman is the most computer seats one human seat may
 	// add, within the lobby's available seats.
@@ -125,6 +135,23 @@ type SeatRules interface {
 	// that pass, keeps normal sight and the defeated human watches with
 	// normal fog until its computers are gone.
 	ComputersStopWithHost() bool
+	// ChosenStarts reports whether a skirmish player's chosen start replaces
+	// retail's StartPos assignment for that player. Retail assigns every
+	// start by the Location word [08 R-ENTRY-01 §5].
+	ChosenStarts() bool
+	// AlliedSightChoice reports whether the lobby's Allied Sight choice
+	// applies: a single-player skirmish's teams may share sight and radar,
+	// and an online skirmish room may keep its teams' sight separate. Retail
+	// never merges an ally's sight [03 §3.2]; an online room's teams share
+	// it in every mode (docs/DESIGN_MULTIPLAYER.md §6.7), which a refused
+	// choice leaves as it is.
+	AlliedSightChoice() bool
+	// ExtraStarts reports whether a skirmish may seat more players than the
+	// map has start positions, the players without one beginning at
+	// generated starts. Retail's Start preflight refuses such a setup
+	// ("There are too many players enabled for this map") and its battle
+	// entry treats a missing start as fatal [08 R-ENTRY-01 §5].
+	ExtraStarts() bool
 }
 
 // StrictSeats is retail's answer: one computer per human machine, hosted by
@@ -141,6 +168,16 @@ func (StrictSeats) ComputerSeatsPerHuman() int { return 1 }
 // a defeated viewer's [03 R-VIS-01 §4].
 func (StrictSeats) ComputersStopWithHost() bool { return true }
 
+// ChosenStarts is retail's: every start comes from the Location word.
+func (StrictSeats) ChosenStarts() bool { return false }
+
+// AlliedSightChoice is retail's: no choice, so a single-player team keeps
+// separate sight and an online room's teams share it.
+func (StrictSeats) AlliedSightChoice() bool { return false }
+
+// ExtraStarts is retail's: a player without a start position is refused.
+func (StrictSeats) ExtraStarts() bool { return false }
+
 // ModernSeats is the approved Nanolathe online policy for Modern and
 // Community 3.9 (docs/DESIGN_MULTIPLAYER.md §6.6, §15 Q23): a human may add
 // computers up to the available lobby seats, and a hosted computer keeps
@@ -156,6 +193,19 @@ func (ModernSeats) ComputerSeatsPerHuman() int { return SkirmishMaxPlayers }
 // hosts play on until they are destroyed or the battle ends, and a defeated
 // host's sensor pass stays an ordinary viewer's while one of them lives.
 func (ModernSeats) ComputersStopWithHost() bool { return false }
+
+// ChosenStarts is the Nanolathe Modern policy approved on 2026-10-18: a
+// player's chosen start replaces its assignment
+// (docs/DESIGN_SESSIONS_AI_SAVE.md "Modern chosen start positions").
+func (ModernSeats) ChosenStarts() bool { return true }
+
+// AlliedSightChoice is the Nanolathe Modern policy approved on 2026-10-18
+// (docs/DESIGN_SESSIONS_AI_SAVE.md "Modern allied sight").
+func (ModernSeats) AlliedSightChoice() bool { return true }
+
+// ExtraStarts is the Nanolathe Modern policy approved on 2026-10-18
+// (docs/DESIGN_SESSIONS_AI_SAVE.md "Modern extra start positions").
+func (ModernSeats) ExtraStarts() bool { return true }
 
 // UnitLimitRules is the save/restore unit-limit policy seam
 // (DESIGN_SESSIONS_AI_SAVE "Modern save unit limits"). It is the one gameplay
@@ -222,6 +272,7 @@ func StrictRuleSet() RuleSet {
 		Orders:         orders.StrictRules{},
 		Construction:   construction.StrictRules{},
 		Economy:        economy.StrictRules{},
+		FeaturePool:    features.StrictRules{},
 		UnitLimit:      StrictUnitLimit{},
 		ScriptPorts:    StrictScriptPorts{},
 		Movement:       movement.StrictRules{},
@@ -246,6 +297,7 @@ func CommunityRuleSet() RuleSet {
 		Orders:         &orders.CommunityRules{},
 		Construction:   &construction.CommunityRules{},
 		Economy:        economy.CommunityRules{},
+		FeaturePool:    features.CommunityRules{},
 		UnitLimit:      ModernUnitLimit{},
 		ScriptPorts:    CommunityScriptPorts{},
 		Movement:       &movement.CommunityRules{},
@@ -272,6 +324,7 @@ func ModernRuleSet() RuleSet {
 		Orders:       &orders.ModernRules{},
 		Construction: &construction.ModernRules{},
 		Economy:      economy.ModernRules{},
+		FeaturePool:  features.ModernRules{},
 		UnitLimit:    ModernUnitLimit{},
 		ScriptPorts:  ModernScriptPorts{},
 		Movement:     &movement.ModernRules{},
@@ -423,6 +476,9 @@ func completeRuleSet(name string, set RuleSet) RuleSet {
 	if set.Construction == nil {
 		set.Construction = base.Construction
 	}
+	if set.FeaturePool == nil {
+		set.FeaturePool = base.FeaturePool
+	}
 	if set.Economy == nil {
 		set.Economy = base.Economy
 	}
@@ -543,6 +599,9 @@ func (s *Session) BindRules(set RuleSet) {
 
 func (s *Session) bindRuleServices(set RuleSet) {
 	s.Rules = set
+	if s.Features != nil {
+		s.Features.Rules = set.FeaturePool
+	}
 	if s.Econ != nil {
 		s.Econ.Rules = set.Economy
 		if !s.economyActivityHoldsAllowed() {

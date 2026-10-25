@@ -1111,20 +1111,25 @@ the original row finishes.
 **Nanolathe Modern policy — user-authorized 2026-10-08, issue #98, refined
 2026-10-09 after the constructor patrol audit below, with successful-work
 continuation refined by the maintainer's 2026-10-14 request to fix
-[issue #122](https://github.com/nanolathe-gg/nanolathe/issues/122).** While actually
-patrolling, a mobile constructor considers eligible units and authored
-automatic-reclaim features within or on its current authored sight circle.
-There is no route-line, waypoint-proximity or extra LOS/radar veto. This
-supersedes the previous 128-unit patrol corridor. Guard retains its separate
-128-unit ward circle and ordinary direct ward assistance.
+[issue #122](https://github.com/nanolathe-gg/nanolathe/issues/122), and
+selection, failure and cadence refined by the maintainer's 2026-10-22 request
+in [Smarter patrol — 2026-10-22](#smarter-patrol--2026-10-22).** While
+actually patrolling, a mobile constructor considers eligible units and
+authored automatic-reclaim features within or on its current authored sight
+circle and within twice that radius of its current leg. There is no
+waypoint-proximity or extra LOS/radar veto. This supersedes the previous
+128-unit patrol corridor. Guard retains its separate 128-unit ward circle and
+ordinary direct ward assistance.
 
-Selection prioritizes unfinished construction, including a factory's currently
-allocated product, then damaged friendly units, then reclaim. Within a category,
-nearest wins, with unit-handle or feature-identity ties. A factory queue gap
-creates no synthetic product. Selection draws no RNG; the existing executors
-retain their resource, approach, script, effect and RNG contracts. Payment
-refusal alone does not end work. Reclaim requires a feature yielding a resource
-below capacity and retains the authored reclaim predicates.
+Selection scores every candidate by its detour from the leg, with a reclaim
+offset and a penalty for builders already on the target, and borrows the
+lowest score (2026-10-22, rules P4 and P5). That supersedes the earlier
+construction-before-repair-before-reclaim category order. A factory's
+currently carried product is construction; a factory queue gap creates no
+synthetic product. Selection draws no RNG; the existing executors retain their
+resource, approach, script, effect and RNG contracts. Payment refusal alone
+does not end work. Reclaim requires a feature yielding a resource below
+capacity and retains the authored reclaim predicates.
 
 Reclaim / Both / Assist are saved independently for all three standing movement
 stances. Modern defaults to Both in every stance. Strict keeps retail selection,
@@ -1141,60 +1146,309 @@ A borrowed patrol job saves the acquisition XYZ and prepends ordinary queue
 rows in this order: work, saved-position return move, then the exact retained
 patrol and all successors. Ground and air do this in every stance. During work,
 the target must remain within or on the authored sight circle anchored at that
-saved position. On successful construction, repair or reclaim, remove only that
-job's proven return move and immediately resume the exact pending patrol leg
-from the job site. Its normal scan may acquire another nearby job there; a new
-job gets its own acquisition anchor. No completed job sends the helper back to
-its acquisition position or rotates the pending waypoint. Thus A → work → B
-and A → work 1 → work 2 → B retain the original route direction. The result
-hook adds no RNG draw or resource transaction; ordinary subsequent work retains
-its own effects. This supersedes the October 9 successful-work return policy,
+saved position, and the builder within or on twice that radius of it. On
+successful construction, repair or reclaim, remove only that job's proven
+return move and immediately resume the exact pending patrol leg from the job
+site. Its normal scan may acquire another nearby job there; a new job gets its
+own acquisition anchor. No completed job sends the helper back to its
+acquisition position or rotates the pending waypoint. Thus A → work → B and
+A → work 1 → work 2 → B retain the original route direction. The result hook
+adds no RNG draw or resource transaction; ordinary subsequent work retains its
+own effects. This supersedes the October 9 successful-work return policy,
 which caused the backtracking reported in issue #122.
 
-The saved move remains the pursuit anchor and failure-recovery destination
-until work succeeds. Modern arrival-place assignment and exchange do not change
-a proven recovery return's saved destination; settling elsewhere cannot
-establish that the helper returned.
+The saved move is the pursuit and stray anchor only. Since 2026-10-22 every
+end of a borrowed job removes it — success, failure and the neutral outcome
+alike — and the leg resumes from where the builder stands; the saved position
+never runs as a recovery move. Modern arrival-place assignment and exchange
+still leave a proven return's destination alone, for the rule-switch case in
+which one reaches the head.
 
-Invalid targets, abandoned pursuit and ordinary executor failures retain the
-return move and pause borrowing across the whole retained patrol route. Failed
-return movement resumes that route under the same pause. Only genuine
-patrol-waypoint arrival clears it; maintenance, rotation, payload release and
-no-route do not. Replacing the assignment clears it; adding a successor or
-changing stance does not. If no waypoint is reachable, borrowing stays paused
-until replacement. Terminal pump codes alone do not establish success: ground
-repair can finish unsuccessfully, and aircraft move can finish on a failed
-movement wake. Danger may abandon automatic repair while retaining its return
-and recovery pause; it does not abandon protected construction work.
+A failed job — an invalid or killed target, abandoned pursuit, a stray
+builder, an ordinary executor failure, or danger abandoning automatic repair —
+remembers its target in the queue's eight-entry memory, which only a genuine
+patrol-waypoint arrival forgets; maintenance, rotation, payload release and
+no-route do not. Replacing the assignment resets it; adding a successor or
+changing stance does not. Selection skips remembered targets, so failure no
+longer pauses borrowing across the route. Terminal pump codes alone do not
+establish success: ground repair can finish unsuccessfully, and aircraft move
+can finish on a failed movement wake. Danger does not abandon protected
+construction work. This supersedes the 2026-10-09 failure return and
+route-wide pause.
 
 **Public API and ownership.** Use the existing `orders.Rules`:
 `DefaultBuilderOptions` supplies defaults; `PatrolWorkVisit` selects at the
-existing maintenance boundary; `AutomaticWorkValid` checks proven provenance;
-`AutomaticWorkResult` classifies ordinary work/movement outcomes before cleanup.
-Strict/Community leave these Modern hooks unhandled, valid or unchanged. State
-belongs to the queue and its nodes, with no controller, timer or resource ledger.
-Work references its exact retained assignment and return node. Return nodes carry
-separate provenance and an arrival receipt; the queue owns the route-wide pause.
-Parity capture uses ordinals, and canonical capture uses typed object references,
-including detached/cyclic links. The return node's ordinary XYZ is the anchor.
+existing maintenance boundary; `PatrolWorkWake` selects between maintenance
+visits; `AutomaticWorkValid` checks proven provenance and the pursuit and
+stray bounds; `AutomaticWorkResult` classifies ordinary work/movement outcomes
+before cleanup. Strict/Community leave these Modern hooks unhandled, valid,
+declined or unchanged. State belongs to the queue and its nodes, with no
+controller, timer or resource ledger. Work references its exact retained
+assignment, its return node and, for a carried product, its factory. Return
+nodes carry separate provenance; the queue owns the failed-target memory and
+the selection cadence. Parity capture uses ordinals, and canonical capture
+uses typed object references, including detached/cyclic links. The return
+node's ordinary XYZ is the anchor.
 
 Rebinding preserves staged state. A rule switch retains ordinary queued work and
 return rows per DESIGN_GAMEPLAY_RULES §9; Strict/Community stop invoking Modern
-validation/recovery, and switching back exposes any retained pause. The existing
-retail save format serializes ordinary rows but loses these new provenance,
-anchor and pause receipts. Unknown restored work is exempt until its ordinary
-executor ends: adjacent patrol/guard rows do not prove automatic origin. Newly
-borrowed jobs after load receive the normal limits. Persisting receipts needs a
-separate save extension, outside this change.
+validation/recovery, and switching back exposes any retained memory. The
+existing retail save format serializes ordinary rows but loses these new
+provenance, anchor, factory, memory and cadence receipts. Unknown restored
+work is exempt until its ordinary executor ends: adjacent patrol/guard rows do
+not prove automatic origin. Newly borrowed jobs after load receive the normal
+limits. Persisting receipts needs a separate save extension, outside this
+change.
 
-Verification locks inclusive sight/pursuit boundaries, late work during actual
-patrol motion, delivered construction/repair/reclaim and refused payment,
-factory products/gaps, saved choices and resource deficits, onward movement and
-route retention after success, consecutive jobs and multiple waypoints, semantic
-failure/return failure, danger/rebinding, and Strict/Community
-bypass. Ground/air and all stances use stock-unit session fixtures; fine arithmetic
+Verification locks inclusive sight/pursuit/stray boundaries, late work during
+actual patrol motion, delivered construction/repair/reclaim and refused
+payment, factory products/gaps, saved choices and resource deficits, onward
+movement and route retention after success, consecutive jobs and multiple
+waypoints, semantic failure, danger/rebinding, and Strict/Community bypass.
+Ground/air and all stances use stock-unit session fixtures; fine arithmetic
 and state transitions use authored orders/movement fixtures. Both whole-tree
 gates, simulation-cost and applicable movement/path checks are landing gates.
+The 2026-10-22 rules add their own tests below.
+
+#### Smarter patrol — 2026-10-22
+
+**Nanolathe Modern policy — user-authorized 2026-10-22.** The maintainer asked
+that builder patrol be "way smarter about how it finds targets near it while
+patrolling to repair, build, reclaim". A stock-content audit on the retail
+fixture map measured why it was not:
+
+1. Reclaiming a map rock or tree left its cell holding the reclaimable
+   definition for the 16–24 ticks of its reclaim sequence, until a
+   non-reclaimable successor (a scar) appeared [05 R-FEAT-01 §5]. The scan
+   re-picked the dying feature within two ticks, the successor made that
+   reclaim abandon, and the abandon was classified as failure, which paused
+   borrowing until the next waypoint. An ARMCK was paused for 84% of 4000
+   ticks.
+2. Any failure — a killed target, a moving patient — paused the whole route
+   and sent the builder back to its acquisition point first.
+3. Nothing marked a target as taken: six builders picked one rock, five piled
+   onto one repair, and reclaim pays only its finisher.
+4. Chained jobs each took a fresh anchor, so a trail of wrecks could pull a
+   builder 1,200 units off its route.
+5. A target 223 units away in a straight line sent an ARMCK on a 1,435-unit
+   path.
+6. Energy below a fifth of storage switched off construction assistance as
+   well as repair.
+7. Construction anywhere in sight beat a damaged unit beside the builder, and
+   a route past a producing factory made the builder its permanent guard.
+8. Moving patients were chosen and then lost.
+9. Selection ran only at leg maintenance, every 60 ticks on the ground and 45
+   in the air.
+
+**Strict 3.1 answer.** Unchanged: the retail repair-patrol rows pick randomly
+among the sight-radius repair population behind the twenty-percent energy
+gate, hold when both stores are healthy and run the sampled feature
+tournaments, at the rows' own maintenance cadence [04 R-ORD-01 §4]
+[04 R-ORD-01 §7] [04 R-ORD-02 §4]. Community keeps its September source-profile
+choices. Neither rule set reads or writes any state below; `PatrolWorkWake`
+declines, and every other hook answers as before, so their selection, queue
+transitions, resources and both RNG streams are unchanged.
+
+**Modern answer.** Selection and its outcomes follow these rules. "Sight" is
+the builder's authored sight distance. Every number is an approved policy
+value, not a retail finding.
+
+- **P1 — dying features.** `orders.FeatureView.Animating` is derived by the
+  session's feature adapter from the feature's live event record: burning,
+  dying or playing its reclaim sequence [05 R-FEAT-01 §5] [05 R-FEAT-01 §9].
+  Selection never picks such a feature; burning is included because the
+  payout guard refuses a sprite feature with a live event record
+  [05 R-FEAT-01 §15]. A borrowed reclaim that ends unsuccessfully while its
+  goal cell no longer resolves to a resting reclaimable feature — removed,
+  replaced by a non-reclaimable successor, or animating — is **neutral**:
+  neither success nor failure, nothing remembered. Likewise a construction or
+  repair job whose living target someone else finished or healed first is
+  neutral. Whether retail credits a second reclaimer finishing during the
+  sequence is open: `TODO(question)` at `features.Service.ReclaimAt` and
+  doc 05's "Missing and unknown" list; Strict keeps the researched guard.
+- **P2 — per-target failure memory.** The route-wide pause is gone. The queue
+  keeps eight entries in a fixed ring; a full ring overwrites its oldest
+  entry, and a target already remembered takes no second slot. An entry is
+  a unit (its identity and handle, as the danger contacts keep it, so a
+  reused pool slot is a different unit), a feature's anchor cell, or a
+  factory, each with its kind. A failed construction or repair job remembers
+  its unit, unless the unit was already freed and its reference unlinked
+  [04 R-MOV-03 §7]; a failed reclaim remembers its feature's anchor. Every
+  entry is forgotten at a genuine patrol-waypoint arrival — the patrol record
+  rotating with the arrival outcome and without no-route, the event that
+  cleared the pause before — and the whole state resets when the assignment
+  is replaced (cancel-all, the Replace purge, or a non-queued front-segment
+  issue). Selection skips remembered targets. Every job end drops its
+  saved-position return and resumes the retained leg from where the builder
+  stands: success in the same pump visit, failure and the neutral outcome on
+  the next tick (the leg's deadline gate is armed for it), so no failing
+  selection repeats inside one visit. A saved return that reaches the head —
+  only across a rule switch — ends quietly: codes 7 and 9 become 8.
+- **P3 — route leash.** A candidate must be within or on the sight circle of
+  the builder, as before, and within or on twice sight of the closed segment
+  from the leg's start waypoint to its end waypoint, in whole world units.
+  The end is the assignment's goal. The start is the last other record of
+  the same patrol row in the front segment: rotation sends an arrived
+  waypoint to the tail, and before the first arrival that record is the
+  patrol-chain setup's return-to-start record at the position where the
+  patrol began [04 R-ORD-01 §4]. A queue with no such record has no leash.
+  A builder on its leg sees nothing farther than sight from it, so the leash
+  bites only when chained jobs have pulled the builder away, bounding drift
+  at twice sight. Guard's 128-unit circle is unchanged.
+- **P4 — claims.** Claims are derived during selection's one unit-pool walk
+  from other units' current queue heads, owner and allies only; nothing
+  stores them. Reclaim is **exclusive**: a feature whose anchor is the
+  resolved goal of another friendly unit's running `Reclaim`, `VTOL_Reclaim`
+  or `Resurrect` is skipped. Repair and construction assistance are not
+  exclusive: each friendly head of `HelpBuild`, `VTOL_HelpBuild`,
+  `RepairUnit`, `VTOL_RepairUnit`, `MobileBuild`, `VTOL_MobileBuild` or
+  `BuildingBuild` that names the candidate counts as one helper, the unit's
+  own producer included. Builders spread out when other work exists and
+  still gang up when it is the only job.
+- **P5 — score.** In whole world units, score = detour + category offset +
+  helper penalty, where detour = |builder → target| + |target → leg end| −
+  |builder → leg end|, each length an exact integer square root of a
+  whole-unit squared distance; the category offset is 0 for construction and
+  repair and sight/4 for reclaim; the helper penalty is sight/4 per helper.
+  The lowest score wins. Ties go to the smaller squared straight-line
+  distance, then to unit work before reclaim, then to the unit handle or the
+  feature's stable anchor order (Z cell, X cell, identity). That is a strict
+  total order, so restricted and full feature traversals pick alike. A
+  factory's carried product is ordinary construction, and its job records the
+  factory carrying it. **Factory trap:** a successful assist on that product
+  remembers the factory — the completion transition has already detached the
+  product [04 R-FAC-02 §3] — and selection then skips every product the
+  factory carries until the next waypoint arrival. An assist is successful
+  only once its row reached the work phase (ground `HelpBuild` 3–4,
+  `VTOL_HelpBuild` 3): both rows also complete from their approach when the
+  product is already finished ("nothing left to assist", ground phase 1, air
+  phase 2), and that early finish is P1's neutral outcome, which remembers
+  neither the factory nor the product. A short patrol beside a
+  factory still assists it every lap; a long route past one no longer becomes
+  a permanent guard post.
+- **P6 — stray bound.** During a borrowed job `AutomaticWorkValid` also
+  requires the builder within or on twice sight of its acquisition anchor
+  (the saved position), in the same full-precision form as the existing
+  target-within-sight-of-anchor test, which stays. Beyond it the job
+  abandons as a failure into the memory, bounding path detours.
+- **P7 — energy gate.** The twenty-percent energy test, in the patrol's
+  working-precision form, applies to repair alone; construction assistance
+  and reclaim no longer require it. The danger/quiet-period gate still
+  covers all unit work, and the aircraft pad precedence is unchanged.
+- **P8 — moving patients.** A damaged complete unit whose scalar speed word
+  is nonzero [04 §8.1] is skipped unless the executor's own build-range test
+  already passes [05 R-WORK-01 §2]. Construction targets are unaffected.
+- **P9 — scan cadence.** While patrolling, Modern selection runs every 15
+  ticks on the ground and in the air. `orders.Rules.PatrolWorkWake` is asked
+  from the pump's blocked-head stall: Modern answers only for a repair-patrol
+  head in phase 1 whose leg is installed (its movement-outcome gate armed),
+  15 or more ticks after the queue's last selection; every maintenance visit
+  rearms that tick. The wake never reinstalls the leg, arms its deadline or
+  dispatches its handler, so the 60- and 45-tick maintenance semantics are
+  unchanged until a job is actually borrowed. A damaged aircraft with a pad
+  in reach leaves selection to maintenance, where the pad seek and its
+  bounded draw come first.
+
+**Unchanged.** Stance options and their saved choices, the 2026-10-14
+successful-work continuation, danger protection of running construction,
+Guard's nearby-work policy, and every executor's approach, payment, script
+and effect ordering.
+
+**Supersedes.** The 2026-10-09 failure rule (return to the saved position and
+pause borrowing across the route until a waypoint), the
+construction-before-repair-before-reclaim priority, the "no route-line veto"
+of the acquisition area, and the saved move's role as failure-recovery
+destination. The audit table below is annotated where it differs.
+
+**State ownership.** `Queue.patrolWork` holds the memory ring, its cursor and
+the next wake tick; `Node.workFactory` holds a product job's factory. There is
+no package state, controller or claim table. Selection draws no RNG and
+iterates no map; every walk follows the binding's stable unit and feature
+order. Its distances, leash and score are integer; the only floating point it
+reaches is the two existing allowlisted comparisons, the repair energy
+threshold and the build-range test [I1] [I2] [I4].
+
+**Checkpoint and save.** Canonical capture writes `patrolWork` in the queue's
+lexical field position, after `ownedHandlers`, behind a presence flag: the
+zero state, which Strict 3.1 and Community never leave, is the single false
+flag the former pause byte occupied. Present, it writes all eight slots in
+slot order (`cx`, `cz`, `handle`, `kind`, and `unit` as a typed allocation
+reference), then `next` and `scanDue`. Each node writes `workFactory` as an
+allocation reference, null outside a Modern product job, between
+`workAssignment` and `workReturn`, in place of the former return-arrival
+flag. Collection discovers
+remembered and factory units, retired ones included. The former
+`patrolWorkPaused` and return-arrival receipts are removed. The parity trace
+adds `patrol-memory`, `patrol-work` and `work-factory` lines only when they are
+non-zero, so default receipts keep the pre-existing stream. Retail-format
+saves lose the memory, the cadence and the factory receipt, as they already
+lose the other Modern receipts; a restored queue starts with an empty memory.
+
+**Measured outcome.** The audit's stock scenes on the retail fixture map,
+seeds 12345/67890, before (main at `5f421528`) and after, with resources held
+fixed per scene. "Idle with work in sight" counts patrol-headed ticks with an
+eligible target in sight, plus every paused tick with one before. Strict 3.1
+ran identically before and after in every scene.
+
+| Scene | Paid-work ticks | Paused / idle with work in sight | Targets done (last tick) | Max off route | Waypoints | Reclaims paid |
+|---|---|---|---|---|---|---|
+| S0 ARMCK, map features only | 170 → 354 | 3360 paused → 0 | — | 118 → 436 | 2 → 0 | 3 → 9 |
+| S3a two ARMCK, one small wreck | 293 → 435 | 250 → 11 | 3/3 (1278 → 1298) | 214 → 315 | 0 → 0 | 2 → 6 |
+| S3b frame killed mid-job | 326 → 326 | 996 → 16 | 2/3, frame killed (2641 → 1338) | 100 → 128 | 1 → 0 | 0 → 0 |
+| S3c ARMCK, plateau target | 163 → 326 | 36 → 10 | 1/3 → 2/3 | 790 → 257 | 0 → 3 | 0 → 0 |
+| S4 six-builder squad | 3362 → 3096 | 13015 → 534 | 8/8 (4918 → 2170) | 284 → 419 | 10 → 0 | 7 → 11 |
+| S5b reclaim value | 216 → 531 | 2450 → 21 | 1/3 → 3/3 (1044) | 159 → 272 | 2 → 0 | 4 → 11 |
+| S6a patient walks away | 163 → 163 | 625 → 102 | 1/2 (2201 → 766) | 62 → 18 | 2 → 3 | 0 → 0 |
+| S7b route past a factory | 325 → 793 | 0 → 0 | 2/3 → 3/3 | 83 → 400 | 0 → 1 | 0 → 8 |
+| S10 ARMCA | 1620 → 1279 | 1323 → 6 | 0/3 → 2/3 | 286 → 551 | 6 → 2 | 6 → 17 |
+| S11 ARMCK, frame behind | 1276 → 708 | 31 → 12 | 4/4 (2422) → 3/4 (1094) | 170 → 351 | 0 → 2 | 1 → 8 |
+| S12 ARMCA, wreck trail | 966 → 831 | 192 → 106 | 8/8 → 4/8 | 1204 → 539 | 2 → 2 | 9 → 10 |
+| S13 patient in turret range | 712 → 549 | 46 → 0 | 1/2 → 0/2 | 107 → 125 | 5 → 0 | 0 → 0 |
+
+Paid-work ticks count paid assist and repair visits and reclaim countdown
+ticks. The bounded drift is visible in S12 and S3c, and the rock chains in S0
+and S10 stay within twice sight of the leg. Two scenes lose a target by design:
+in S11 the score prefers the patient, wreck and repair beside the route to a
+frame barely in sight behind the builder, which is never in sight again; in
+S12 the leash stops the builder following the wreck trail beyond twice sight.
+In S13 the builder, resuming its leg from where danger interrupted it rather
+than walking back first, re-entered an enemy turret's range under the
+unchanged danger response and was destroyed; the old run survived that scene
+by timing, not by a rule.
+
+**Cost.** The displayless simulation benchmark's Modern scene (seed 7, 600
+measured ticks, alternating builds) reports 1.59–1.68 ms of process CPU per
+tick against main's 1.62–1.65 ms, with the same final partial fingerprint: its
+builders carry build orders, not patrols, so it shows only that the new
+blocked-head question costs nothing measurable. One selection over a 750-unit
+pool with 400 features, a quarter of the units running work heads, takes
+about 18.5 µs against the previous 9.7 µs; at the 15-tick cadence that is
+about 1.2 µs per tick for each patrolling builder, where the old 60-tick scan
+cost 0.16 µs.
+
+**Tests.** `internal/orders/patrol_smart_test.go` locks the score order (near
+reclaim over far construction, detour ahead over nearer work behind, the
+helper penalty with its hostile, multi-helper and gang-up cases, unit work
+before a tied reclaim), exclusive reclaim against ground, air and
+resurrection claims, the inclusive whole-unit leash beside and past the leg
+and its absence without a previous waypoint, the memory ring's overwrite,
+deduplication, identity and skipping, factory memory and its waypoint release,
+the repair-only energy gate, moving patients at the build-range boundary, the
+dying-feature skip and the neutral outcomes, the 15-tick wake that leaves
+maintenance alone, the Strict and Community bypass with RNG and resources
+unchanged, and canonical capture of the memory.
+`internal/orders/patrol_modern_test.go` locks the failure memory, the stray
+bound, waypoint forgetting, replacement, danger abandonment and the quiet
+return across a rule switch. Retail session tests drive stock units:
+`TestModernConstructorPatrolTargetLossContinuesLegRetail` (formerly
+`…TargetLossRecoversAtWaypointRetail`),
+`TestModernConstructorPatrolMovingTargetAbandonsRetail`,
+`TestModernConstructorPatrolCarriedFactoryProductRetail` (the factory trap),
+`TestPublishedPatrolWorkBorrowedAndReturnRetail`, and
+`TestModernConstructorPatrolMapRockReclaimKeepsWorkingRetail`, in which an
+ARMCK patrolling past the fixture map's rocks pays four rock reclaims, never
+borrows an animating rock and starts each next job within one cadence; on the
+previous implementation it re-picked a rock still playing its sequence.
 
 ### Constructor patrol audit — 2026-10-09
 
@@ -1223,7 +1477,7 @@ admission, not selection or a beam, establishes that work was delivered
 | Original 2012–2013 3.9.01/3.9.02 | Recovered release documentation establishes the path-work budget raise; it documents no constructor patrol extension. | Do not attribute later builder options to these binaries. Their exact constructor equivalence remains unknown. |
 | September 2026 source pin `dcff5dd` | Stance-selected Reclaim / Both / Assist and Guard Stay / Cavedog / Scatter; source profiles enable those changes except OTA. | Community implements these choices and branch boundaries. Nanolathe's default Community table is mainline ProTA, even with retail assets; an OTA content install does not select the patch's OTA table. |
 | October 2026 `v2026.10.6` | Per-player reclaim percentages and an aircraft healthy-store gate in non-OTA profiles; explicit ground-to-air Guard/assistance and unpaid air-repair beam suppression in Escalation and Mayhem. | Percentage state/commands, the new air gate and ground-to-air Guard are absent. The earlier generic unpaid-air-repair suppression was corrected to the September/retail contract in this pass; adopting the October suppression remains separate. These additions do not repin the September compatibility target. |
-| Nanolathe Modern | Construction before repair before reclaim; deterministic distance/identity selection; factory-product assistance; deficit-based reclaim; Both defaults, preserving saved choices; saved-position return and acquisition-anchored sight-circle pursuit. | The approved 2026-10-09 policy supersedes the previous patrol corridor, whose failure is reproduced below. Guard retains its separate circle. |
+| Nanolathe Modern | Construction before repair before reclaim; deterministic distance/identity selection; factory-product assistance; deficit-based reclaim; Both defaults, preserving saved choices; saved-position return and acquisition-anchored sight-circle pursuit. | The approved 2026-10-09 policy supersedes the previous patrol corridor, whose failure is reproduced below. Guard retains its separate circle. Since 2026-10-22 selection is the detour score with a route leash, and failure is a per-target memory ([Smarter patrol — 2026-10-22](#smarter-patrol--2026-10-22)). |
 
 Source identities, algorithms and unresolved historical boundaries belong to
 [community patch pathfinding](../research/extensions/community-patch-pathfinding.md#what-the-39x-documentation-does-not-say)
@@ -1336,12 +1590,12 @@ findings; the owning contract above states implementation and state boundaries.
 | Decision | Approved Modern behavior | Relationship to Community |
 |---|---|---|
 | Work choices | Keep Reclaim / Both / Assist per stance, honor saved choices, and default new settings to Both in all three stances. | The options are inherited; Hold's default changes. |
-| Acquisition area | While actually patrolling, consider eligible units and reclaimable features within or on the current authored sight-radius circle. Apply no route-line or waypoint proximity veto and no extra LOS/radar requirement. | Restore the baseline's unit-assistance area and retire Modern's patrol corridor. A sight-radius circle for feature reclaim is an intentional departure from Community's sampled squares. |
-| Priority | Choose unfinished construction first, then damaged units, then reclaim. Within a category choose nearest, with deterministic identity ties. Include a factory's current unfinished product. | Intentional priority, deterministic selection and factory-product extensions. No selection RNG; ordinary executor draws remain. |
-| Resources and execution | Use the baseline executor, including its ordinary eligibility, energy admission, approach, payment and script/effect ordering. Reclaim only when the feature yields a resource below its capacity. A refused payment is not a successful contribution or, by itself, an abandoned job. | Retain Modern's deficit-based reclaim; no percentage commands or new resource ledger. |
+| Acquisition area | While actually patrolling, consider eligible units and reclaimable features within or on the current authored sight-radius circle. Apply no route-line or waypoint proximity veto and no extra LOS/radar requirement. *Refined 2026-10-22: candidates must also lie within twice sight of the current leg (P3).* | Restore the baseline's unit-assistance area and retire Modern's patrol corridor. A sight-radius circle for feature reclaim is an intentional departure from Community's sampled squares. |
+| Priority | Choose unfinished construction first, then damaged units, then reclaim. Within a category choose nearest, with deterministic identity ties. Include a factory's current unfinished product. *Superseded 2026-10-22 by the detour score, claims and factory memory (P4, P5).* | Intentional priority, deterministic selection and factory-product extensions. No selection RNG; ordinary executor draws remain. |
+| Resources and execution | Use the baseline executor, including its ordinary eligibility, energy admission, approach, payment and script/effect ordering. Reclaim only when the feature yields a resource below its capacity. A refused payment is not a successful contribution or, by itself, an abandoned job. *Since 2026-10-22 the selection energy gate covers repair alone (P7).* | Retain Modern's deficit-based reclaim; no percentage commands or new resource ledger. |
 | Completion and return | Save the acquisition position for pursuit and failure recovery. On successful work, remove its proven recovery move and immediately continue the exact pending patrol leg from the job site, including normal work scanning there. Ground and air do this in every stance. | The maintainer's 2026-10-14 issue #122 fix request supersedes the original successful-work return; every waypoint and successor stays intact. |
-| Failure | If the target becomes invalid, pursuit is abandoned, or the ordinary work executor reports failure, return and pause borrowing across the retained patrol route until genuine arrival at a patrol waypoint. If the return move fails, continue the retained patrol under the same pause. | Intentional bounded recovery: no immediate retry loop, invented timeout or discarded route. Queue rotation, goal release and no-route outcomes do not count as arrival. Replacing the patrol assignment resets the pause. |
-| Moving targets | During a borrowed job, the target must remain within or on the authored sight-radius circle around the saved acquisition position. Leaving that circle abandons the job through the failure rule. Do not validate it against the old route corridor. | A separately defined Modern pursuit limit, shared by selection/provenance validation rather than a wider route constant. |
+| Failure | If the target becomes invalid, pursuit is abandoned, or the ordinary work executor reports failure, return and pause borrowing across the retained patrol route until genuine arrival at a patrol waypoint. If the return move fails, continue the retained patrol under the same pause. *Superseded 2026-10-22: no return trip and no pause; the target is remembered until the next waypoint arrival (P2).* | Intentional bounded recovery: no immediate retry loop, invented timeout or discarded route. Queue rotation, goal release and no-route outcomes do not count as arrival. Replacing the patrol assignment resets the pause. |
+| Moving targets | During a borrowed job, the target must remain within or on the authored sight-radius circle around the saved acquisition position. Leaving that circle abandons the job through the failure rule. Do not validate it against the old route corridor. *Since 2026-10-22 the builder must also stay within twice sight of that position (P6), and a moving patient out of build range is not selected (P8).* | A separately defined Modern pursuit limit, shared by selection/provenance validation rather than a wider route constant. |
 | Safety and Guard | Keep the existing low-health pad precedence and danger/quiet-period admission, including protection for construction assistance already in progress. Keep Guard's approved 128-unit ward area. | No safety or Guard changes in this patrol proposal. Danger can still delay acquiring a new unfinished target; that exception is explicit. |
 | Modes and restored work | Apply these departures only through the existing Modern orders seam. Strict/Community retain their baseline choices, queue transitions, resource and RNG effects. Unknown restored producer provenance remains exempt until that work ends. | No new registry or guessed origin. Retail-format saves retain ordinary move rows but lose the Modern anchor/provenance/pause receipt; this policy does not promise to restore those limits without a save extension. |
 
@@ -1350,7 +1604,9 @@ and is used for this lifecycle in all stances with the approved acquisition
 circle and failed-job pause. The 2026-10-14 refinement removes it after success;
 failed work still returns, including in Roam. If no retained waypoint can be
 reached, failed-job borrowing stays paused until the player replaces the
-assignment. These are explicit approved tradeoffs.
+assignment. These are explicit approved tradeoffs. *Superseded 2026-10-22: every
+job end removes the return, and the per-target memory replaces the pause
+([Smarter patrol — 2026-10-22](#smarter-patrol--2026-10-22)).*
 
 Queue provenance, pursuit validation, parity fingerprints and canonical
 checkpoint capture must change together, with stable ordinal/reference links
@@ -1363,7 +1619,9 @@ classified by the ordinary work/movement outcome, not a terminal pump code
 alone: those codes are reused for both arrival and failed work. Return moves
 need provenance distinct from player-issued moves, and danger interruption
 must preserve the route-wide pause. Lock inclusive circle boundaries in the
-acceptance fixtures.
+acceptance fixtures. *The pause requirements are superseded by the 2026-10-22
+memory: it spans rotation, clears only on genuine waypoint arrival or
+replacement, and danger abandonment remembers its patient.*
 The patrol corridor is retired by this explicit approval; Guard's approved
 128-unit ward circle is unchanged.
 

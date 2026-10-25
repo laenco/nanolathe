@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/nanolathe-gg/nanolathe/internal/drawlist"
 	"github.com/nanolathe-gg/nanolathe/internal/platform/ebitenapp"
@@ -37,6 +38,21 @@ func windowOptionsFor(current func() *gameShell) ebitenapp.RunOptions {
 	options := windowRunOptions(g.opts)
 	g.fullscreen = startupFullscreen(g.opts, g.fullscreen)
 	options.Fullscreen = g.fullscreen
+	options.IdleAllowed = func() bool {
+		g := current()
+		return g.frontend != nil && g.frontend.Mode == modeBattle && g.battle != nil && g.battle.postBattle == nil
+	}
+	options.IdleService = func(focused bool) time.Duration {
+		pumpAudio(time.Now())
+		if owner := current().audioOwner; focused && owner != nil {
+			serviceMusic(owner)
+			if delay := owner.MusicServiceDelay(); delay > 0 {
+				return min(time.Second, delay)
+			}
+		}
+		// Reap completed device buffers without stepping or redrawing battle.
+		return time.Second
+	}
 	options.PresentationSettings = func() (ebitenapp.RendererMode, int) {
 		g := current()
 		return rendererMode(g.opts), g.presentation.FPS

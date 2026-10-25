@@ -5,6 +5,7 @@ package content
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/nanolathe-gg/nanolathe/formats"
@@ -24,6 +25,12 @@ type BuildMenuPage struct {
 	// download cutoff. Rules select it without mutating this immutable catalog.
 	AuthoredButtons []string
 	BaseButtonCount int // prefix authored by CANBUILD before download extension [02 R-CAT-01 §5,§8]
+	// InstalledProducts are the products the builder's own numbered build
+	// pages install, in page and gadget order (fillInstalledProducts). An
+	// authored page may name a product its CANBUILD omits, and that button
+	// builds it [07 §9]. Neither rule's membership reads this; the Modern
+	// AI's candidates do (DESIGN_SESSIONS_AI_SAVE "Modern AI page products").
+	InstalledProducts []string
 }
 
 // BaseButtons returns a copy of the CANBUILD-authored prefix. Generated pages
@@ -170,4 +177,64 @@ func sortedBuildMenuKeys(pages map[string]*BuildMenuPage) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// productGadgetAttr is the `commonattribs` bit that marks a build page's
+// product slot; the generated-page patch sets it on every slot it installs
+// [07 §9].
+const productGadgetAttr = 4
+
+// fillInstalledProducts records, for each builder menu, the products its
+// authored numbered build pages install: in `guis/<n>1.GUI`, `guis/<n>2.GUI`,
+// … up to the first missing page (fillUnitRecordBuildPages' probe), every
+// button gadget carrying the product-slot attribute whose name resolves to a
+// definition. A download record that patches a slot of an authored page
+// replaces that gadget's name, so the slot it names is skipped; its product
+// is already in the menu's download membership [07 §9]. Page 0 is the orders
+// state and installs none. A page that does not parse installs nothing here.
+func fillInstalledProducts(fs vfs.FSOps, units map[string]*UnitDef, menus map[string]*BuildMenuPage, placements []DownloadMenuPlacement) {
+	if fs == nil || len(units) == 0 || len(menus) == 0 {
+		return
+	}
+	type slot struct {
+		page, gadget int
+	}
+	for _, key := range sortedBuildMenuKeys(menus) {
+		menu, def := menus[key], units[key]
+		if menu == nil || def == nil {
+			continue
+		}
+		patched := map[slot]bool{}
+		for _, p := range placements {
+			if p.BuilderResolved && p.ProductResolved && CanonicalKey(p.Builder) == key {
+				patched[slot{p.VisiblePage(), int(p.Button) + 4}] = true
+			}
+		}
+		name := CanonicalKey(def.UnitName)
+		if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
+			name = name[:dot]
+		}
+		for page := 1; ; page++ {
+			path := "guis/" + name + strconv.Itoa(page) + ".gui"
+			if info, err := fs.Stat(path); err != nil || info.Size <= 0 {
+				break
+			}
+			data, err := fs.ReadFileLimit(path, 1<<20)
+			if err != nil {
+				continue
+			}
+			gui, err := formats.LoadGUI(data)
+			if err != nil {
+				continue
+			}
+			for i, g := range gui.Gadgets {
+				if !g.HasCommon || g.Common.ID&0xFF != 1 || g.Common.CommonAttributes&productGadgetAttr == 0 || patched[slot{page, i}] {
+					continue
+				}
+				if product := units[CanonicalKey(g.Common.Name)]; product != nil {
+					menu.InstalledProducts = append(menu.InstalledProducts, product.UnitName)
+				}
+			}
+		}
+	}
 }

@@ -49,6 +49,10 @@ type onlineSettings struct {
 	mapping        uint8
 	lineOfSight    uint8
 	losType        uint8
+	// separateSight keeps a skirmish room's teams' sight and radar apart;
+	// the zero value shares them, as every online skirmish did before the
+	// option (required configuration extension 18, DESIGN_MULTIPLAYER §6.7).
+	separateSight bool
 	// computers are the host's computer players in their stored order
 	// (session.OnlineComputersOf), every one hosted by seat 0. Every seat
 	// composes them after its present humans. A change replaces the slice,
@@ -79,7 +83,8 @@ func onlineSettingsOf(r session.MatchConfigRequest) onlineSettings {
 		pace: r.SurvivalPace, noAir: r.SurvivalNoAir, noNaval: r.SurvivalNoNaval,
 		location: r.Location, commanderDeath: r.CommanderDeath, mapping: r.Mapping,
 		lineOfSight: r.LineOfSight, losType: r.LOSType,
-		computers: session.OnlineComputersOf(r),
+		separateSight: !r.AlliedSight.Shared(true),
+		computers:     session.OnlineComputersOf(r),
 	}
 }
 
@@ -212,6 +217,11 @@ func onlineConfigOn(fs vfs.FSOps, cat *content.Catalog, settings onlineSettings,
 	// positions, as its single-player screen does (DESIGN_SURVIVAL §9).
 	if !settings.survival {
 		request.Location = settings.location
+		// Version 1's rule shares a room's sight, so only the other choice is
+		// written (required configuration extension 18).
+		if settings.separateSight && onlineSeatRules(settings.rules).AlliedSightChoice() {
+			request.AlliedSight = session.MatchAlliedSightSeparate
+		}
 	}
 	request.CommanderDeath, request.Mapping, request.LineOfSight, request.LOSType = settings.commanderDeath, settings.mapping, settings.lineOfSight, settings.losType
 	return session.ResolveMatchConfig(request)

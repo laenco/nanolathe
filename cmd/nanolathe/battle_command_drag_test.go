@@ -550,3 +550,69 @@ func TestCommandDragCancelBoundaries(t *testing.T) {
 		t.Fatalf("queue after row %v %v, want only the extractor", after, products)
 	}
 }
+
+func TestCommandDragAreaReclaimWalksNearestFirstPerWorker(t *testing.T) {
+	b, _, _, builder := resourceFixture(t, false)
+	// armcons in this fixture cannot reclaim; armrecl can.
+	reclaimer, ok := b.cat.Unit("armrecl")
+	if !ok {
+		t.Fatal("fixture reclaimer missing")
+	}
+	west, err := b.sess.Units.Create(reclaimer, 0, numeric.Fixed(100<<16), 0, numeric.Fixed(160<<16))
+	if err != nil {
+		t.Fatal(err)
+	}
+	east, err := b.sess.Units.Create(reclaimer, 0, numeric.Fixed(900<<16), 0, numeric.Fixed(160<<16))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Selection admits only published units, so publish them first.
+	b.sess.Step(b.sess.Clock.ScaledAnchor + 1)
+	if err := b.enqueueSelectionCommand(session.HumanCommand{Kind: session.HumanSelectionReplace, Selection: session.HumanSelectionCommand{Handles: []pool.Handle{builder, west, east}}}); err != nil {
+		t.Fatal(err)
+	}
+	b.sess.Step(b.sess.Clock.ScaledAnchor + 1)
+	f, _ := b.currentSnapshot()
+	next := b.sess.Snapshot.BeginWrite()
+	*next = *f
+	// Publication order is deliberately scrambled along the row.
+	next.Features = nil
+	for _, x := range []int64{600, 200, 800, 400} {
+		next.Features = append(next.Features, frame.FeatureView{CX: int32(x / 16), CZ: 10, FootX: 1, FootZ: 1, X: numeric.Fixed(x << 16), Z: 160 << 16, Reclaimable: true, Blocking: true})
+	}
+	if err := b.sess.Snapshot.Publish(f.Tick + 1); err != nil {
+		t.Fatal(err)
+	}
+	f = b.sess.Snapshot.Current()
+	d := &battleCommandDrag{start: dragPoint{150, 100}, end: dragPoint{850, 220}, latch: input.LatchReclaim}
+	b.dispatchAreaWork(f, 12, b.dragAreaTargets(f, d), false)
+	xs := func(c session.HumanCommand) []int64 {
+		var out []int64
+		for _, target := range c.Order.Targets {
+			out = append(out, target.Position.X.Floor())
+		}
+		return out
+	}
+	byActor := map[pool.Handle][]int64{}
+	var handles [][]pool.Handle
+	for _, c := range b.sess.PendingHumanCommands() {
+		if c.Kind != session.HumanOrder || c.Order.Code != 12 {
+			continue
+		}
+		handles = append(handles, c.Order.Handles)
+		for _, h := range c.Order.Handles {
+			byActor[h] = xs(c)
+		}
+	}
+	if got := byActor[west]; !slices.Equal(got, []int64{200, 400, 600, 800}) {
+		t.Fatalf("west worker %v", got)
+	}
+	if got := byActor[east]; !slices.Equal(got, []int64{800, 600, 400, 200}) {
+		t.Fatalf("east worker %v", got)
+	}
+	// The unit that cannot reclaim queues nothing; it rides in the first
+	// worker's command rather than costing a command of its own.
+	if want := [][]pool.Handle{{builder, west}, {east}}; !slices.EqualFunc(handles, want, slices.Equal) {
+		t.Fatalf("commands name %v, want %v", handles, want)
+	}
+}

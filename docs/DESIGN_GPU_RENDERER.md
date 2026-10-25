@@ -3621,6 +3621,20 @@ existing colour filter. This adds no render target, temporal history or
 simulation state. The device fixture compares filtered submerged and ordinary
 opaque hulls with the identity Blue table and refraction disabled.
 
+**Zoomed-out shimmer investigation (2026-10-19; no renderer change).** The
+below-1× path selects one resolved native 2×2 atlas block per screen pixel;
+it does not gather the whole minified footprint. At 0.5× that footprint is
+4×4 atlas texels. A synthetic GPU probe with a frozen one-native-pixel striped
+model, supersampling on and material effects off, changed all sampled interior
+pixels from gray 40 to 220 after a 0.125-screen-pixel camera translation.
+The same probe at 1.5× transitioned gradually through the filter above.
+This establishes minification aliasing in the model commit as a plausible
+source of the playtest shimmer; the exact reported scene remains unreproduced.
+Feature sprite levels do not provide live-unit model minification. A follow-up
+should compare a frozen installed unit across fractional camera offsets with
+a moving unit under a fixed camera, separating texture, silhouette and shadow
+changes before choosing any correction.
+
 Prototype validation: Great Divide, seed 7, 1280×720, 90 ticks, with the local
 commander selected, produces byte-identical before/after PNGs at exact 1× and
 2×. The short coastal benchmark (scene 5, seed 7, 1920×1080, 1.5×, 30 draws/s,
@@ -4580,7 +4594,7 @@ rules carry their own revision; neither changes the definition hash.
 |---|---|---|
 | 1 | Structure versus mobile from the compiled BMCode convention, capabilities partitioned from role; explicit category family tokens first, compatible `TEDClass` metadata next; contradictory or absent evidence keeps a generic family. Comparison is case-insensitive whole-token [02 "Unit record"][fmt fbi] | infer legs from a TANK movement name; read `NOTAIR` as an aircraft token or `NOTSUB` as a submarine one |
 | 2 | Specific purpose before incidental stats: feature conversion, commander appearance, resurrection/construction, manufacturing/repair, dedicated economy and sensors, then combat and general support; every supported capability is retained even when the icon displays one | collapse capabilities into the displayed role |
-| 3 | A structure builder with a nonempty final product menu uses the single factory glyph | add a subtype or badge for a product family |
+| 3 | A structure builder whose final product menu names at least one unit that occupies ground (nonzero footprint) uses the single factory glyph. A menu of only footprint-less in-place upgrades or unresolved names, as on Escalation's upgradable towers, reactors and repair pads, is not production: the structure takes its role from its other evidence [fmt fbi] | add a subtype or badge for a product family; draw an upgradable tower as a factory |
 | 4 | Explicit economy and sensor tags plus capability fields distinguish dedicated functions; energy generation must include negative EnergyUse, wind and tide as documented inputs [02 "Unit record"] | let a constructor's production, a plant's storage or a gun's radar replace a primary role |
 | 5 | Only active resolved weapon slots, first active slot in authored 1/2/3 order; interceptor, dropped, water-weapon and paralyzer flags are capability evidence, and a primary role read from one needs a reviewed mapping | use ExplodeAs or SelfDestructAs; combine slots into a mixed glyph; infer scout/artillery/heavy/AA from speed, range, cost, damage or weapon-name thresholds |
 | 6 | A small explicit presentation mapping, only with recorded evidence; an unknown or modded definition gets a generic fallback | parse localized display names at runtime; give a definition the role of an unrelated stock unit with the same name |
@@ -7980,6 +7994,29 @@ install, `NANOLATHE_AIRCRAFT_MAP` naming a coastal map and
 `NANOLATHE_AIRCRAFT_PROFILE=1` additionally runs the paired frozen profile under
 the shared benchmark lock. These are staged visual fixtures, not simulated
 flight.
+
+### 34.1 Map-edge receiver
+
+Enhanced aircraft shadows extend the nearest valid bilinear terrain sample
+past the map edge (issue #165). Retail directly uses the query's off-map
+sentinel, so the shadow jumps downward while the aircraft body keeps its
+altitude [03 R-REN-03D §3]. Original preserves that behavior.
+
+For an airborne mover in the modern recording, a sentinel result is replaced
+by a sample with X and Z independently clamped to the bilinear domain: zero
+through one fixed-point step before the last plot column or row begins.
+This also covers the final row/column, where the query has no next neighbour.
+The result feeds both shadow placement and soft-shadow clearance. It applies
+with soft shadows on or off; ordinary in-bounds sampling and its integer
+rounding stay unchanged. The receiver follows terrain along the edge without
+remembering a previous frame. Empty terrain keeps the existing fallback.
+
+This is presentation policy in every gameplay mode. It changes no unit
+position, flight, terrain query, RNG, resources, or simulation fingerprint.
+Grounded units and features keep their existing samples. Classic comparison
+captures preserve Original even when Enhanced art is enabled for the modern
+half. The boundary fixture covers all four edges, corners, a sloped border,
+returning on-map, and both immediate and deferred unit recording.
 
 ## 35. Known limitations and owed work
 

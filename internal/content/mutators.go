@@ -21,27 +21,35 @@ import (
 // (docs/DESIGN_MODS_MUTATORS.md §6.4). The zero value is the identity.
 type Factor struct{ Num, Den uint8 }
 
-// MutatorSteps is the closed step list, in ascending order. Settings, flags
-// and sidecars refuse any other value, which keeps the test matrix finite and
-// every product exact (docs/DESIGN_MODS_MUTATORS.md §6.4, P4).
+// MutatorSteps is the shared closed step list, in ascending order, which
+// every mutator but Builder speed uses. Settings, flags and sidecars refuse
+// any other value, which keeps the test matrix finite and every product exact
+// (docs/DESIGN_MODS_MUTATORS.md §6.4, P4).
 var MutatorSteps = []Factor{{1, 4}, {1, 2}, {3, 4}, {1, 1}, {3, 2}, {2, 1}, {3, 1}, {4, 1}}
 
-// ParseFactor reads one step in its canonical decimal spelling: "0.25",
-// "0.5", "0.75", "1", "1.5", "2", "3" or "4". Any other text, including an
+// BuilderSpeedSteps is Builder speed's own closed step list, in ascending
+// order: whole multiples only, with the identity first, because its factor
+// multiplies script animation rates and divides sleeps
+// (docs/DESIGN_MODS_MUTATORS.md §6.4, "Builder speed").
+var BuilderSpeedSteps = []Factor{{1, 1}, {2, 1}, {3, 1}, {5, 1}, {8, 1}, {20, 1}}
+
+// parseFactorIn reads one step of steps in its canonical decimal spelling:
+// "0.25", "0.5", "0.75", "1", "1.5", "2", "3" or "4" on the shared list, and
+// "2", "3", "5", "8" or "20" on Builder speed's. Any other text, including an
 // equal value spelled differently ("1/2", ".5", "2.0"), is an error.
-func ParseFactor(s string) (Factor, error) {
+func parseFactorIn(s string, steps []Factor) (Factor, error) {
 	text := strings.TrimSpace(s)
-	for _, step := range MutatorSteps {
+	for _, step := range steps {
 		if step.String() == text {
 			return step, nil
 		}
 	}
-	return Factor{}, fmt.Errorf("content: mutator factor %q is not one of %s", s, stepSpellings())
+	return Factor{}, fmt.Errorf("content: mutator factor %q is not one of %s", s, stepSpellings(steps))
 }
 
-func stepSpellings() string {
-	names := make([]string, len(MutatorSteps))
-	for i, step := range MutatorSteps {
+func stepSpellings(steps []Factor) string {
+	names := make([]string, len(steps))
+	for i, step := range steps {
 		names[i] = step.String()
 	}
 	return strings.Join(names, ", ")
@@ -50,7 +58,7 @@ func stepSpellings() string {
 // IsIdentity reports whether the factor changes nothing: the zero value or 1/1.
 func (f Factor) IsIdentity() bool { return f == (Factor{}) || f == (Factor{1, 1}) }
 
-// String is the canonical spelling ParseFactor reads, a decimal because most
+// String is the canonical spelling parseFactorIn reads, a decimal because most
 // players read "1.5" more easily than "3/2": "2", "0.5", "0.75", and "1" for
 // the identity. Every step is a whole number of quarters, so every step has
 // an exact decimal; a factor off the list with no short exact decimal keeps
@@ -83,48 +91,55 @@ func (f Factor) String() string {
 // Label is the player-facing spelling: "×2", "×0.5", "×1".
 func (f Factor) Label() string { return "×" + f.String() }
 
-// Next is the following step, clamped at the list's last step. A factor that
-// is not on the list moves to the first step above its value; the zero value
-// cycles as 1/1.
-func (f Factor) Next() Factor {
+// NextIn is the following step of steps, an ascending list such as a
+// MutatorInfo's Steps, clamped at its last step. A factor that is not on
+// the list moves to the first step above its value; the zero value cycles as
+// 1/1.
+func (f Factor) NextIn(steps []Factor) Factor {
+	if len(steps) == 0 {
+		return f
+	}
 	if f.IsIdentity() || f.Den == 0 {
 		f = Factor{1, 1}
 	}
-	for _, step := range MutatorSteps {
+	for _, step := range steps {
 		// step > f, compared by cross-multiplication.
 		if uint16(step.Num)*uint16(f.Den) > uint16(f.Num)*uint16(step.Den) {
 			return step
 		}
 	}
-	return MutatorSteps[len(MutatorSteps)-1]
+	return steps[len(steps)-1]
 }
 
-// Prev is the preceding step, clamped at the list's first step. A factor that
-// is not on the list moves to the last step below its value; the zero value
-// cycles as 1/1.
-func (f Factor) Prev() Factor {
+// PrevIn is the preceding step of steps, clamped at its first step. A factor
+// that is not on the list moves to the last step below its value; the zero
+// value cycles as 1/1.
+func (f Factor) PrevIn(steps []Factor) Factor {
+	if len(steps) == 0 {
+		return f
+	}
 	if f.IsIdentity() || f.Den == 0 {
 		f = Factor{1, 1}
 	}
-	for i := len(MutatorSteps) - 1; i >= 0; i-- {
+	for i := len(steps) - 1; i >= 0; i-- {
 		// step < f, compared by cross-multiplication.
-		if step := MutatorSteps[i]; uint16(step.Num)*uint16(f.Den) < uint16(f.Num)*uint16(step.Den) {
+		if step := steps[i]; uint16(step.Num)*uint16(f.Den) < uint16(f.Num)*uint16(step.Den) {
 			return step
 		}
 	}
-	return MutatorSteps[0]
+	return steps[0]
 }
 
 // inverse is 1/f. Every step's inverse is itself exact: the identity maps to
 // the identity and Num/Den to Den/Num.
 func (f Factor) inverse() Factor { return Factor{Num: f.Den, Den: f.Num} }
 
-// valid reports whether the factor is the identity or one of MutatorSteps.
-func (f Factor) valid() bool {
+// validIn reports whether the factor is the identity or one of steps.
+func (f Factor) validIn(steps []Factor) bool {
 	if f.IsIdentity() {
 		return true
 	}
-	for _, step := range MutatorSteps {
+	for _, step := range steps {
 		if f == step {
 			return true
 		}
@@ -140,18 +155,45 @@ func (f Factor) valid() bool {
 // half up — then saturates at limit. Saturating rather than wrapping means a
 // mutator never introduces a wrap.
 func (f Factor) scale(v, limit int64) int64 {
-	if v <= 0 || f.IsIdentity() {
+	if f.IsIdentity() {
 		return v
 	}
-	num, den := int64(f.Num), int64(f.Den)
-	r := (v*num + den/2) / den
-	if r < 1 {
-		r = 1
+	return f.ratio().scale(v, limit)
+}
+
+// ratio is an exact product of factors held in 64-bit integers. Builder speed
+// composes with Unit speed as k_u²·k_b, up to 16·20, which a Factor's 8-bit
+// numerator cannot hold, so that product is formed here and never stored
+// (docs/DESIGN_MODS_MUTATORS.md §6.4).
+type ratio struct{ num, den int64 }
+
+// ratio is the factor as an exact ratio; the zero value is 1/1.
+func (f Factor) ratio() ratio {
+	if f.IsIdentity() {
+		return ratio{1, 1}
 	}
-	if r > limit {
-		r = limit
+	return ratio{int64(f.Num), int64(f.Den)}
+}
+
+func (r ratio) times(o ratio) ratio { return ratio{r.num * o.num, r.den * o.den} }
+
+func (r ratio) isIdentity() bool { return r.num == r.den }
+
+// scale is §6.4's rule for the exact ratio: v <= 0 unchanged, otherwise
+// max(1, (v·num + ⌊den/2⌋) div den), round half up, saturated at limit. Every
+// operand is at most 2^31·320, well inside 64 bits.
+func (r ratio) scale(v, limit int64) int64 {
+	if v <= 0 || r.isIdentity() {
+		return v
 	}
-	return r
+	out := (v*r.num + r.den/2) / r.den
+	if out < 1 {
+		out = 1
+	}
+	if out > limit {
+		out = limit
+	}
+	return out
 }
 
 // Mutators is the closed set of global multipliers one battle runs under. The
@@ -202,14 +244,23 @@ type Mutators struct {
 	// acceleration by k², and brakerate by k² on the ground and by k in the
 	// air, where the flight integrator reads it as a speed.
 	UnitSpeed Factor
+	// BuilderSpeed makes every builder k× as agile and its build animations
+	// k× as fast, from its own step list (BuilderSpeedSteps): a mobile
+	// builder's turnrate by k, and a ground mobile builder's acceleration and
+	// brakerate by k, leaving top speed alone; the factor is recorded on every
+	// builder definition (UnitDef.BuilderSpeed), where its script VM and its
+	// mobile-build approach read it. Shown as "Builder speed".
+	BuilderSpeed Factor
 }
 
 // MutatorInfo describes one mutator for a front end, so a screen builds its
 // rows from data instead of naming fields. Group is a short heading. Label
 // and Description are player-facing and ASCII only, because the retail fonts
-// have no multiplication sign.
+// have no multiplication sign. Steps is the mutator's closed step list in
+// ascending order, the identity included.
 type MutatorInfo struct {
 	Key, Label, Group, Description string
+	Steps                          []Factor
 }
 
 // mutatorField is one row of the closed set: its descriptor and its field.
@@ -218,21 +269,25 @@ type mutatorField struct {
 	get func(*Mutators) *Factor
 }
 
+// steps is the row's closed step list.
+func (f mutatorField) steps() []Factor { return f.Steps }
+
 // mutatorFields lists the set in the design table's order, grouped, which is
 // the order Describe and MutatorCatalog present
 // (docs/DESIGN_MODS_MUTATORS.md §6.5).
 var mutatorFields = []mutatorField{
-	{MutatorInfo{"buildSpeed", "Build speed", "Economy", "Divides every unit's build time; total cost is unchanged."}, func(m *Mutators) *Factor { return &m.BuildSpeed }},
-	{MutatorInfo{"buildCost", "Build cost", "Economy", "Multiplies unit costs and the value of their wrecks."}, func(m *Mutators) *Factor { return &m.BuildCost }},
-	{MutatorInfo{"income", "Income", "Economy", "Multiplies production beyond each unit's upkeep."}, func(m *Mutators) *Factor { return &m.Income }},
-	{MutatorInfo{"salvage", "Salvage", "Economy", "Multiplies the value of wrecks, rocks and trees."}, func(m *Mutators) *Factor { return &m.Salvage }},
-	{MutatorInfo{"health", "Health", "Combat", "Multiplies every unit's hit points."}, func(m *Mutators) *Factor { return &m.Health }},
-	{MutatorInfo{"damage", "Damage", "Combat", "Multiplies the damage of every weapon and explosion."}, func(m *Mutators) *Factor { return &m.Damage }},
-	{MutatorInfo{"areaOfEffect", "Blast size", "Combat", "Multiplies every blast radius; direct hits are unchanged."}, func(m *Mutators) *Factor { return &m.AreaOfEffect }},
-	{MutatorInfo{"fireRate", "Fire rate", "Combat", "Divides every reload time; cost per shot is unchanged."}, func(m *Mutators) *Factor { return &m.FireRate }},
-	{MutatorInfo{"unitSpeed", "Unit speed", "Movement", "Multiplies how fast every unit moves and turns."}, func(m *Mutators) *Factor { return &m.UnitSpeed }},
-	{MutatorInfo{"sight", "Sight", "Vision", "Multiplies every unit's line of sight."}, func(m *Mutators) *Factor { return &m.Sight }},
-	{MutatorInfo{"radar", "Radar", "Vision", "Multiplies radar, sonar and jamming ranges."}, func(m *Mutators) *Factor { return &m.Radar }},
+	{MutatorInfo{"buildSpeed", "Build speed", "Economy", "Divides every unit's build time; total cost is unchanged.", MutatorSteps}, func(m *Mutators) *Factor { return &m.BuildSpeed }},
+	{MutatorInfo{"buildCost", "Build cost", "Economy", "Multiplies unit costs and the value of their wrecks.", MutatorSteps}, func(m *Mutators) *Factor { return &m.BuildCost }},
+	{MutatorInfo{"income", "Income", "Economy", "Multiplies production beyond each unit's upkeep.", MutatorSteps}, func(m *Mutators) *Factor { return &m.Income }},
+	{MutatorInfo{"salvage", "Salvage", "Economy", "Multiplies the value of wrecks, rocks and trees.", MutatorSteps}, func(m *Mutators) *Factor { return &m.Salvage }},
+	{MutatorInfo{"health", "Health", "Combat", "Multiplies every unit's hit points.", MutatorSteps}, func(m *Mutators) *Factor { return &m.Health }},
+	{MutatorInfo{"damage", "Damage", "Combat", "Multiplies the damage of every weapon and explosion.", MutatorSteps}, func(m *Mutators) *Factor { return &m.Damage }},
+	{MutatorInfo{"areaOfEffect", "Blast size", "Combat", "Multiplies every blast radius; direct hits are unchanged.", MutatorSteps}, func(m *Mutators) *Factor { return &m.AreaOfEffect }},
+	{MutatorInfo{"fireRate", "Fire rate", "Combat", "Divides every reload time; cost per shot is unchanged.", MutatorSteps}, func(m *Mutators) *Factor { return &m.FireRate }},
+	{MutatorInfo{"unitSpeed", "Unit speed", "Movement", "Multiplies how fast every unit moves and turns.", MutatorSteps}, func(m *Mutators) *Factor { return &m.UnitSpeed }},
+	{MutatorInfo{"builderSpeed", "Builder speed", "Builders", "Builders animate, turn and accelerate faster and start work in range.", BuilderSpeedSteps}, func(m *Mutators) *Factor { return &m.BuilderSpeed }},
+	{MutatorInfo{"sight", "Sight", "Vision", "Multiplies every unit's line of sight.", MutatorSteps}, func(m *Mutators) *Factor { return &m.Sight }},
+	{MutatorInfo{"radar", "Radar", "Vision", "Multiplies radar, sonar and jamming ranges.", MutatorSteps}, func(m *Mutators) *Factor { return &m.Radar }},
 }
 
 // mutatorFieldsByKey is mutatorFields in ascending key order, the canonical
@@ -245,12 +300,13 @@ var mutatorFieldsByKey = func() []mutatorField {
 
 // MutatorCatalog returns the descriptors in the design table's order, grouped:
 // Economy (build speed, build cost, income, salvage), Combat (health, damage,
-// blast size, fire rate), Movement (unit speed), Vision (sight, radar). The
-// slice is a copy.
+// blast size, fire rate), Movement (unit speed), Builders (builder speed),
+// Vision (sight, radar). The slice and each step list are copies.
 func MutatorCatalog() []MutatorInfo {
 	out := make([]MutatorInfo, len(mutatorFields))
 	for i, field := range mutatorFields {
 		out[i] = field.MutatorInfo
+		out[i].Steps = append([]Factor(nil), field.Steps...)
 	}
 	return out
 }
@@ -265,8 +321,8 @@ func mutatorKeys() string {
 
 // ParseMutators reads the settings and flag form, key to canonical factor
 // spelling. Keys are walked in sorted order, so the first error reported is
-// deterministic (I1). An unknown key or a factor off the step list is an error
-// naming it. An identity factor parses to the zero value.
+// deterministic (I1). An unknown key or a factor off that key's step list is
+// an error naming it. An identity factor parses to the zero value.
 func ParseMutators(values map[string]string) (Mutators, error) {
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -279,9 +335,9 @@ func ParseMutators(values map[string]string) (Mutators, error) {
 		if !ok {
 			return Mutators{}, fmt.Errorf("content: unknown mutator %q, expected one of %s", key, mutatorKeys())
 		}
-		factor, err := ParseFactor(values[key])
+		factor, err := parseFactorIn(values[key], field.steps())
 		if err != nil {
-			return Mutators{}, fmt.Errorf("content: mutator %s factor %q is not one of %s", key, values[key], stepSpellings())
+			return Mutators{}, fmt.Errorf("content: mutator %s factor %q is not one of %s", key, values[key], stepSpellings(field.steps()))
 		}
 		if factor.IsIdentity() {
 			factor = Factor{}
@@ -309,16 +365,16 @@ func (m Mutators) Factor(key string) (Factor, bool) {
 	return *field.get(&m), true
 }
 
-// SetFactor stores f for key. It refuses an unknown key and a factor off the
-// step list; an identity factor is stored as the zero value, so a set edited
-// back to 1 compares equal to the zero set.
+// SetFactor stores f for key. It refuses an unknown key and a factor off that
+// key's step list; an identity factor is stored as the zero value, so a set
+// edited back to 1 compares equal to the zero set.
 func (m *Mutators) SetFactor(key string, f Factor) error {
 	field, ok := mutatorFieldByKey(key)
 	if !ok {
 		return fmt.Errorf("content: unknown mutator %q, expected one of %s", key, mutatorKeys())
 	}
-	if !f.valid() {
-		return fmt.Errorf("content: mutator %s factor %d/%d is not one of %s", key, f.Num, f.Den, stepSpellings())
+	if !f.validIn(field.steps()) {
+		return fmt.Errorf("content: mutator %s factor %d/%d is not one of %s", key, f.Num, f.Den, stepSpellings(field.steps()))
 	}
 	if f.IsIdentity() {
 		f = Factor{}
@@ -396,6 +452,9 @@ func (m Mutators) describe(label func(Factor) string) []string {
 // meaning of any existing set string, since no string written before them
 // names their keys, so the tag stayed 2.
 // Tag 3: Sight above identity extends the per-battle visibility inputs.
+// Builder speed, added under tag 3, likewise left it: it has a key of its own
+// that no earlier string names, and with it absent every other transform —
+// Unit speed's motion fields included — is unchanged.
 const mutatorIdentityTag = "mutators/3"
 
 // Digest is a stable identity of the set: a hash of mutatorIdentityTag and the
@@ -405,11 +464,12 @@ func (m Mutators) Digest() string {
 	return HashDefinition([]byte(mutatorIdentityTag + "\n" + m.String() + "\n"))
 }
 
-// validate rejects a factor that is neither the identity nor on the step list.
+// validate rejects a factor that is neither the identity nor on its key's
+// step list.
 func (m Mutators) validate() error {
 	for _, field := range mutatorFieldsByKey {
-		if f := *field.get(&m); !f.valid() {
-			return fmt.Errorf("content: mutator %s factor %d/%d is not one of %s", field.Key, f.Num, f.Den, stepSpellings())
+		if f := *field.get(&m); !f.validIn(field.steps()) {
+			return fmt.Errorf("content: mutator %s factor %d/%d is not one of %s", field.Key, f.Num, f.Den, stepSpellings(field.steps()))
 		}
 	}
 	return nil
@@ -679,6 +739,20 @@ const (
 //     weapon's speed and turn rate are unchanged, so fast units outrun more
 //     fire. cruisealt and the bank and pitch gains are left alone.
 //
+// Builder speed k, from its own step list, applies to every definition that
+// authors builder — commanders, mobile builders, factories and nano towers —
+// and to no other (scaleMotion). A builder the allocator gives a mover gains
+// turnrate ×k, and a ground one acceleration and brakerate ×k as well, so it
+// reaches its unchanged top speed and turns in 1/k of the time; a flying one
+// gains turnrate only, since the flight integrator turns its acceleration and
+// brakerate into speeds [04 §10.1]. With Unit speed each field is scaled once
+// by the exact product, formed in 64 bits. Every builder records k in
+// BuilderSpeed. This is the first mutated value that engine code reads rather
+// than retail arithmetic: the session hands it to the builder's script VM,
+// which runs the build-animation functions k× faster, and a mobile ground
+// builder starts placement once retail's reach test passes instead of walking
+// to the footprint border (docs/DESIGN_MODS_MUTATORS.md "Builder speed").
+//
 // The only compile-time values derived from a mutated field are the moverate1
 // and moverate2 defaults, twice maxvelocity; Unit speed scales them by the
 // same k, so they stay twice the scaled velocity to within one 16.16 unit.
@@ -729,21 +803,8 @@ func (c *Catalog) ApplyMutators(m Mutators) error {
 			u.RadarDistanceJam = int32(m.Radar.scale(int64(u.RadarDistanceJam), mutatorDistanceLimit))
 			u.SonarDistanceJam = int32(m.Radar.scale(int64(u.SonarDistanceJam), mutatorDistanceLimit))
 		}
-		if !m.UnitSpeed.IsIdentity() {
-			k := m.UnitSpeed
-			squared := k.times(k)
-			brake := squared
-			if u.CanFly {
-				brake = k
-			}
-			u.MaxVelocity = int32(k.scale(int64(u.MaxVelocity), mutatorMotionLimit))
-			u.Acceleration = int32(squared.scale(int64(u.Acceleration), mutatorMotionLimit))
-			u.BrakeRate = int32(brake.scale(int64(u.BrakeRate), mutatorMotionLimit))
-			u.MoveRate1 = int32(k.scale(int64(u.MoveRate1), mutatorMotionLimit))
-			u.MoveRate2 = int32(k.scale(int64(u.MoveRate2), mutatorMotionLimit))
-			if stored := int64(uint16(u.TurnRate)); stored > 0 {
-				u.TurnRate = int32(k.scale(stored, mutatorTurnRateLimit))
-			}
+		if !m.UnitSpeed.IsIdentity() || (u.Builder && !m.BuilderSpeed.IsIdentity()) {
+			scaleMotion(u, m.UnitSpeed, m.BuilderSpeed)
 		}
 	}
 	if m.Sight.Num > m.Sight.Den {
@@ -820,6 +881,50 @@ func (c *Catalog) ApplyMutators(m Mutators) error {
 	// which hashes the identity tag and the canonical String (§6.6).
 	c.Hash = HashDefinition([]byte("catalog+mutators\n" + c.Hash + "\n" + m.Digest() + "\n"))
 	return nil
+}
+
+// scaleMotion applies Unit speed k_u and Builder speed k_b to one unit's
+// motion fields, each field scaled once by the exact product and saturated
+// (docs/DESIGN_MODS_MUTATORS.md §6.4, "Builder speed"):
+//
+//   - Unit speed: maxvelocity and the two movement-rate thresholds by k_u,
+//     turnrate by k_u, acceleration by k_u², brakerate by k_u² on the ground
+//     and by k_u in the air, where the flight integrator reads it as a speed
+//     [04 R-MOV-01 §1][04 §10.1].
+//   - Builder speed applies only to a definition authoring builder, and its
+//     agility only to one the allocator gives a mover, bmcode 1
+//     [04 R-FAC-02 §5]: turnrate by k_b, and for a ground builder
+//     acceleration and brakerate by k_b too. Top speed is untouched. A flying
+//     builder's acceleration and brakerate feed the flight integrator's speed
+//     terms [04 §10.1], so scaling them would change its top speed; it gains
+//     turnrate only.
+//
+// Every builder, mobile or not, records k_b in BuilderSpeed for its script VM
+// and its mobile-build approach.
+func scaleMotion(u *UnitDef, unitSpeed, builderSpeed Factor) {
+	ku := unitSpeed.ratio()
+	kb := ratio{1, 1}
+	if u.Builder && !builderSpeed.IsIdentity() {
+		u.BuilderSpeed = builderSpeed
+		if u.BMCode == 1 {
+			kb = builderSpeed.ratio()
+		}
+	}
+	squared := ku.times(ku)
+	turn, accel, brake := ku.times(kb), squared, squared
+	if u.CanFly {
+		brake = ku
+	} else {
+		accel, brake = squared.times(kb), squared.times(kb)
+	}
+	u.MaxVelocity = int32(ku.scale(int64(u.MaxVelocity), mutatorMotionLimit))
+	u.Acceleration = int32(accel.scale(int64(u.Acceleration), mutatorMotionLimit))
+	u.BrakeRate = int32(brake.scale(int64(u.BrakeRate), mutatorMotionLimit))
+	u.MoveRate1 = int32(ku.scale(int64(u.MoveRate1), mutatorMotionLimit))
+	u.MoveRate2 = int32(ku.scale(int64(u.MoveRate2), mutatorMotionLimit))
+	if stored := int64(uint16(u.TurnRate)); stored > 0 {
+		u.TurnRate = int32(turn.scale(stored, mutatorTurnRateLimit))
+	}
 }
 
 // mutatorWeapons returns every weapon record once, in sorted catalog-name

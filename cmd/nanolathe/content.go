@@ -101,6 +101,9 @@ type contentSet struct {
 	// mapRoots are the downloaded map packages this mount holds, below the
 	// base install, in mount order.
 	mapRoots []string
+	// generated are the generated maps this mount holds from memory, below
+	// everything else (docs/DESIGN_MAP_GENERATOR.md §10).
+	generated []*generatedMap
 	// addons are the official add-ons this mount holds from the library,
 	// in the base install's folder at its *.UFO tier; addonSelection is what
 	// the mount was asked for, which a remount asks for again; addonsOff
@@ -247,8 +250,8 @@ func mountContent(opts Options, baseRoots []string, selection modSelection) (*co
 		gameRoots[i] = vfs.GameRoot{Dir: root}
 	}
 	gameRoots[mapRootsCount].Extra = addonExtras(addons.mounted)
-	gameRoots[mapRootsCount].ExtraLayout = factionLayout(profile.Layout(), addons.factions)
-	gameRoots[mapRootsCount].ExtraTier = addonExtraTier(addons.factions)
+	gameRoots[mapRootsCount].ExtraLayout = addonExtraLayout(profile.Layout(), addons.factions, addons.models)
+	gameRoots[mapRootsCount].ExtraTier = addonExtraTier(addons.factions, addons.models)
 	fileSystem := vfs.New()
 	if err := fileSystem.MountGameRoots(gameRoots); err != nil {
 		fileSystem.Close()
@@ -260,6 +263,10 @@ func mountContent(opts Options, baseRoots []string, selection modSelection) (*co
 			fileSystem.Close()
 			return nil, err
 		}
+	}
+	if err := mountGeneratedMaps(fileSystem, opts.generatedMaps); err != nil {
+		fileSystem.Close()
+		return nil, err
 	}
 	// The Nanolathe config is chosen before anything reads content: its
 	// content section is the directory table and limits every reader goes
@@ -293,8 +300,9 @@ func mountContent(opts Options, baseRoots []string, selection modSelection) (*co
 		root:             baseRoots[0], roots: append([]string(nil), roots...), notes: fileSystem.Notes(),
 		mod: mod, baseRoots: append([]string(nil), baseRoots...), manualRoots: selection.manual, modNotice: notice,
 		configNotice: config.notice, savedMod: selection.saved, skippedMaps: skippedMaps,
-		mapRoots: append([]string(nil), mapRoots...),
-		addons:   addons.mounted, addonSelection: addons.selection, addonsOff: addons.off,
+		mapRoots:  append([]string(nil), mapRoots...),
+		generated: append([]*generatedMap(nil), opts.generatedMaps...),
+		addons:    addons.mounted, addonSelection: addons.selection, addonsOff: addons.off,
 	}
 	set.notes = append(set.notes, mapNotes...)
 	set.notes = append(set.notes, addons.notes...)

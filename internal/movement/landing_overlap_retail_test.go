@@ -98,7 +98,12 @@ func TestRetailLandedAircraftResumePatrolAssistance(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
+	// Full stores leave the frame the only job: Modern patrol spreads builders
+	// over other work in sight, such as map reclaim, and gangs up only when
+	// the frame is all there is (DESIGN_UNITS_ORDERS_COB "Smarter patrol —
+	// 2026-10-22"). The paid assists still go through the ordinary ledger.
 	for tick := 0; tick < 300 && contributed != [3]bool{true, true, true}; tick++ {
+		f.s.Econ.Players[0].Stock = f.s.Econ.Players[0].Capacity
 		f.step(1)
 	}
 	for i, u := range aircraft {

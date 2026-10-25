@@ -157,6 +157,9 @@ func (s *toolsScreen) label(dst *ebiten.Image, text string, r screenkit.Rect, st
 	}
 	y := r.Y + style.Size
 	style.Size *= s.scale
+	// The viewer measures on the CPU without translation (unitViewerMeasure),
+	// so it draws what it measured.
+	style.Verbatim = true
 	font.Draw(target, unitViewerFontText(text), s.canvas.X+x*s.scale, s.canvas.Y+y*s.scale, style)
 }
 

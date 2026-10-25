@@ -66,6 +66,9 @@ func (g *gameShell) saveSidecar() save.Sidecar {
 		sess = g.battle.sess
 	}
 	out := session.SaveSidecar(sess)
+	if g.battle != nil {
+		out.SurvivalBest = g.battle.recordSurvivalBest()
+	}
 	out.UnitLimit = g.setup.UnitLimit
 	if g.cs != nil {
 		out.ContentProfile = g.cs.profile
@@ -79,6 +82,9 @@ func (g *gameShell) saveSidecar() save.Sidecar {
 			out.Addons = append(out.Addons, save.SidecarAddon{ID: a.ID, Version: a.Version, SHA256: fmt.Sprintf("%x", addonlibrary.Digest(a.Archives))})
 		}
 	}
+	// A generated map's recipe, so the game loads after its memory mount is
+	// gone (docs/DESIGN_MAP_GENERATOR.md §10).
+	out.GeneratedMap = g.battleRecipe()
 	return out
 }
 
@@ -335,6 +341,37 @@ const (
 	saveSidecarLineGadget = "NLSIDECAR"
 	saveSidecarLineWidth  = 350
 )
+
+// saveSummaryDifficulty reads the selected save's recorded entry table, which
+// fixes its AI plan/persona and parameters even after a rule switch. A
+// continuation instead starts the next mission fresh under its recorded
+// current selection (DESIGN_COMMUNITY_PATCH §4.8). Today's mounted mod,
+// preferences and running battle never participate in this label.
+// Without a sidecar the format alone establishes retail's index order; an
+// unreadable sidecar leaves the label empty rather than guessing a tier.
+func saveSummaryDifficulty(bankPath string, summary save.Summary) int32 {
+	sc, ok, err := save.ReadSidecar(bankPath)
+	if err != nil {
+		return -1
+	}
+	if !ok {
+		return summary.Difficulty
+	}
+	features := sc.Community.Entry
+	// Load preflight branches on scalar presence, including a zero payload
+	// [08 R-SAVE-02 §11]; the label must describe that same fresh entry.
+	if summary.HasBetweenMissions {
+		sel, err := resolveSidecarSelection(sc)
+		if err != nil {
+			return -1
+		}
+		features, err = session.ResolveCommunity(sel.gameplay, sel.sources)
+		if err != nil {
+			return -1
+		}
+	}
+	return int32(session.DifficultyTier(features, int(summary.Difficulty)))
+}
 
 func installSaveSidecarLine(window *gui.Window) {
 	if window == nil || window.GadgetIndex(saveSidecarLineGadget) >= 0 {

@@ -39,7 +39,7 @@ func newBreadthFixture(p Params) *breadthFixture {
 		Def: &content.UnitDef{RadarDistance: 1200, SightDistance: 300}}
 	f.jam = &aikit.UnitInfo{Key: "jam", Role: mob | aikit.RoleScout | aikit.RoleJammer, Metal: 90, HP: 400, Speed: 30,
 		Def: &content.UnitDef{RadarDistanceJam: 400, SightDistance: 300}}
-	f.fark = &aikit.UnitInfo{Key: "fark", Role: mob, Metal: 300, Energy: 1000, HP: 800, BuildPower: 180, Speed: 60, Def: &content.UnitDef{Builder: true}}
+	f.fark = &aikit.UnitInfo{Key: "fark", Role: mob, Metal: 300, Energy: 1000, HP: 800, BuildPower: 180, Speed: 60, Def: &content.UnitDef{Builder: true, CanGuard: true}}
 	f.necro = &aikit.UnitInfo{Key: "necro", Role: mob, Metal: 300, Energy: 1000, HP: 800, BuildPower: 180, Speed: 40, Def: &content.UnitDef{Builder: true, CanResurrect: true}}
 	f.mlv = &aikit.UnitInfo{Key: "mlv", Role: mob | aikit.RoleBuilder, Metal: 170, HP: 1200, BuildPower: 100, Speed: 26,
 		Builds: []*aikit.UnitInfo{mine}, Def: &content.UnitDef{Builder: true}}
@@ -234,6 +234,42 @@ func (f *breadthFixture) offered(q *aikit.UnitInfo) commitKind {
 	return notOffered
 }
 
+// Production stops offering constructors once builders are already idle.
+// The economy can still use the pool; another constructor only crowds the
+// base and blocks factory exits.
+func TestIdleBuildersStopConstructorProduction(t *testing.T) {
+	f := newBreadthFixture(DefaultParams())
+	b := f.produceBoard()
+	f.pr.s.p.WCons = 100
+	f.pr.s.cons = 0
+	f.pr.s.freeSafe = 60
+	f.pr.s.idleBuilders = 2
+	f.pr.s.idleCons = [2]int32{2, 0}
+	f.pr.produce(b, 4)
+	if got := f.offered(f.con); got == pCons {
+		t.Error("idle builders did not stop constructor production")
+	}
+	// The commander is an idle builder too, but not an idle economy
+	// constructor: one idle commander and one idle constructor must not stop
+	// the factory that would give them work.
+	f.pr.s.idleBuilders, f.pr.s.idleCons = 2, [2]int32{}
+	f.pr.produce(b, 4)
+	if got := f.offered(f.con); got != pCons {
+		t.Errorf("one idle constructor plus commander: constructor offered as %d, want constructor", got)
+	}
+	f.pr.s.idleBuilders, f.pr.s.idleCons = 0, [2]int32{}
+	f.pr.s.idleCons = [2]int32{0, 2}
+	f.pr.produce(b, 4)
+	if got := f.offered(f.con); got != pCons {
+		t.Errorf("two idle naval constructors: land constructor offered as %d, want constructor", got)
+	}
+	f.pr.s.idleCons = [2]int32{}
+	f.pr.produce(b, 4)
+	if got := f.offered(f.con); got != pCons {
+		t.Errorf("no idle builders: constructor offered as %d, want constructor", got)
+	}
+}
+
 // Beyond the scout allowance a cheap fast unit is a combat candidate
 // while cheap fast units are under 30% of the factory's combat units, and
 // never with the fast part off.
@@ -342,5 +378,27 @@ func TestAssistBuilders(t *testing.T) {
 	b.O.Own[1].Order = aikit.OrderGuard
 	if n := f.pr.commandAssists(b, 4); n != 1 || f.pr.br.mem[b.O.Own[1].H].guard || f.pr.br.mem[b.O.Own[1].H].target != b.O.Own[2].H {
 		t.Errorf("idle lab: %d orders, memory %+v; want help for the frame", n, f.pr.br.mem[b.O.Own[1].H])
+	}
+}
+
+// A persona short of actions queues combat units two at a time; builders
+// and every product of a persona with actions to spare stay one at a time.
+func TestLowAPMCombatBatch(t *testing.T) {
+	q := &aikit.UnitInfo{Key: "tank"}
+	for _, tc := range []struct {
+		persona aikit.Persona
+		kind    commitKind
+		want    int32
+	}{
+		{aikit.PersonaEasy, pCombat, 2},
+		{aikit.PersonaMed, pCombat, 2},
+		{aikit.PersonaHard, pCombat, 1},
+		{aikit.PersonaEasy, pCons, 1},
+		{aikit.PersonaEasy, pScout, 1},
+	} {
+		k := &aikit.Kit{Persona: tc.persona}
+		if got := batchOf(k, &cand{kind: tc.kind, prod: q}); got != tc.want {
+			t.Errorf("%s kind %d: batch %d, want %d", tc.persona.Name, tc.kind, got, tc.want)
+		}
 	}
 }

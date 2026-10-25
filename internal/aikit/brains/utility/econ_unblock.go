@@ -104,7 +104,10 @@ func (e *Economy) unblock(b *core.Board, budget int) int {
 		}
 		f := &o.Own[fi]
 		fs := s.fstateOf(f)
-		sealed := (j < len(s.facTrapped) && s.facTrapped[j] >= trapMin) || fs.dead || (fs.blocked && fs.clears >= 2)
+		// A stalled pad gets one unblock even before two clear attempts: the
+		// blocker may be just outside the footprint, where clearPads does not
+		// move it. execUnblock is a no-op when the exit is actually open.
+		sealed := (j < len(s.facTrapped) && s.facTrapped[j] >= trapMin) || fs.dead || fs.blocked
 		if !sealed || (fs.lastUnblock != 0 && s.tick-fs.lastUnblock < unblockEvery) {
 			continue
 		}

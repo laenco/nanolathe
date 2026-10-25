@@ -309,8 +309,9 @@ func (s *nlScreen) drawControls(screen *ebiten.Image) {
 func (s *nlScreen) drawProfileBar(screen *ebiten.Image, x, y float64) float64 {
 	u := s.u()
 	df := s.fonts.Display
-	df.Draw(screen, "Controls", x, y+30*u, screenkit.Style{Size: 40 * u, Tracking: 0.02, Top: nlGoldTop, Bottom: nlGoldBottom, Shadow: 0.05})
-	bx := x + 250*u
+	tw := df.Draw(screen, "Controls", x, y+30*u, screenkit.Style{Size: 40 * u, Tracking: 0.02, Top: nlGoldTop, Bottom: nlGoldBottom, Shadow: 0.05})
+	// The profiles start clear of the title in any language.
+	bx := x + max(250*u, tw+32*u)
 	recommend := s.recommendedProfile()
 	df.Draw(screen, "Profile", bx, y+4*u, screenkit.Style{Size: 11 * u, Tracking: 0.26, Top: nlKicker, Upper: true})
 	for i, p := range nlControlsPresets {
@@ -450,7 +451,7 @@ func (s *nlScreen) drawKeyTable(screen *ebiten.Image, r screenkit.Rect) {
 		if a.Fixed {
 			tc = nlDim
 		}
-		bf.Draw(screen, a.Label, rr.X+12*u, rr.Y+rr.H/2+5*u, screenkit.Style{Size: 13 * u, Top: tc, Shadow: 0.1})
+		bf.Draw(screen, a.Label, rr.X+12*u, rr.Y+rr.H/2+5*u, fitStyle(bf, a.Label, screenkit.Style{Size: 13 * u, Top: tc, Shadow: 0.1}, 270*u, 10*u))
 		if a.Fixed {
 			s.padlock(screen, rr.X+rr.W-24*u, rr.Y+rr.H/2-8*u, 14*u, nlDim, false)
 		}
@@ -615,10 +616,11 @@ func (s *nlScreen) drawKeyboard(screen *ebiten.Image, r screenkit.Rect) {
 			screenkit.Fill(screen, kr.Inset(-1*u), color.RGBA{0, 0, 0, 255})
 			screenkit.VGradient(screen, kr, lerpRGBA(base, color.RGBA{255, 255, 255, 255}, 0.12), base)
 			size := min(12*u, unit*0.34)
-			for size > 6*u && df.Measure(k.label, screenkit.Style{Size: size}) > kr.W-6*u {
+			// Key caps carry the keyboard's own legends, untranslated.
+			for size > 6*u && df.Measure(k.label, screenkit.Style{Size: size, Verbatim: true}) > kr.W-6*u {
 				size -= 0.5 * u
 			}
-			df.Draw(screen, k.label, kr.X+kr.W/2, kr.Y+kr.H/2+size/2, screenkit.Style{Size: size, Top: text, Align: 1})
+			df.Draw(screen, k.label, kr.X+kr.W/2, kr.Y+kr.H/2+size/2, screenkit.Style{Size: size, Top: text, Align: 1, Verbatim: true})
 			if k.key != input.KeyNone {
 				s.hits.Add(screenkit.Region{ID: id, Rect: kr})
 				if s.hits.Hot() == id {
@@ -716,15 +718,20 @@ func (s *nlScreen) drawMouseRows(screen *ebiten.Image, r screenkit.Rect) {
 		}
 		v := c.get(&s.draft)
 		reason := s.cardUnavailable(*c)
-		bf.Draw(screen, c.label, r.X+16*u, y+22*u, screenkit.Style{Size: 13.5 * u, Top: nlCream, Shadow: 0.1})
+		// Labels and their lines below end before the buttons in any
+		// language.
+		textW := 226 * u
+		bf.Draw(screen, c.label, r.X+16*u, y+22*u, fitStyle(bf, c.label, screenkit.Style{Size: 13.5 * u, Top: nlCream, Shadow: 0.1}, textW, 10*u))
+		sub := screenkit.Style{Size: 10.5 * u, Top: nlDim}
 		if reason != "" {
-			bf.Draw(screen, reason, r.X+16*u, y+42*u, screenkit.Style{Size: 10.5 * u, Top: nlAmber})
+			sub.Top = nlAmber
+			bf.Draw(screen, reason, r.X+16*u, y+42*u, fitStyle(bf, reason, sub, textW, 8*u))
 		} else if c.key == "zoomstyle" && s.draft.pres.Renderer == "classic" && v != settings.ZoomNone {
-			bf.Draw(screen, "Native 1× / 2× zoom", r.X+16*u, y+42*u, screenkit.Style{Size: 10.5 * u, Top: nlDim})
+			bf.Draw(screen, "Native 1× / 2× zoom", r.X+16*u, y+42*u, fitStyle(bf, "Native 1× / 2× zoom", sub, textW, 8*u))
 		} else if c.key == "zoomstyle" && session.BaseModeOf(s.draft.gameplay) == gameplay.Community39 && s.draft.pres.Overview == settings.OverviewMegamap {
-			bf.Draw(screen, "Megamap active; select zoom.", r.X+16*u, y+42*u, screenkit.Style{Size: 10.5 * u, Top: nlAmber})
+			bf.Draw(screen, "Megamap active; select zoom.", r.X+16*u, y+42*u, fitStyle(bf, "Megamap active; select zoom.", screenkit.Style{Size: 10.5 * u, Top: nlAmber}, textW, 8*u))
 		} else if len(c.subs) > v {
-			bf.Draw(screen, c.subs[v], r.X+16*u, y+42*u, screenkit.Style{Size: 10.5 * u, Top: nlDim})
+			bf.Draw(screen, c.subs[v], r.X+16*u, y+42*u, fitStyle(bf, c.subs[v], sub, textW, 8*u))
 		}
 		bx := r.X + 250*u
 		for i, step := range c.steps {

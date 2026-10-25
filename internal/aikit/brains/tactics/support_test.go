@@ -16,7 +16,7 @@ func supportFixture(t *testing.T, tanks int) (*Army, *core.Board, *aikit.UnitInf
 	a, m := testArmy(40, 40)
 	tank := &aikit.UnitInfo{Index: 0, Role: aikit.RoleMobile | aikit.RoleCombat, DPS: 50, HP: 1000, Value: 200, Speed: 40, Def: &content.UnitDef{}}
 	radar := &aikit.UnitInfo{Index: 1, Role: aikit.RoleMobile | aikit.RoleScout | aikit.RoleRadar, Metal: 90, HP: 400, Speed: 30,
-		Def: &content.UnitDef{RadarDistance: 1200, SightDistance: 300}}
+		Def: &content.UnitDef{RadarDistance: 1200, SightDistance: 300, CanGuard: true}}
 	a.classes = []uclass{{kind: ukGround}, {kind: ukGround}}
 	own := []aikit.OwnUnit{{Info: radar, X: 300, Z: 300, Built: true}}
 	for i := 0; i < tanks; i++ {
@@ -59,6 +59,30 @@ func TestSupportFollowsMainSquad(t *testing.T) {
 	a.support(b)
 	if a.supportOrders != 1 || a.sup[b.O.Own[0].H].ward != 0 {
 		t.Errorf("no main squad: %d orders, want one move to the gather point", a.supportOrders)
+	}
+}
+
+// A support unit authored canguard=0 (TLL's TLLCONFUSER) refuses Guard, so
+// it follows its ward by moving: once when it stands idle out of reach, and
+// not again while it is under way or idle near the ward.
+func TestSupportWithoutGuardFollowsByMoving(t *testing.T) {
+	a, b, radar := supportFixture(t, 3)
+	radar.Def.CanGuard = false
+	b.O.Own[0].Order = aikit.OrderMove
+	a.support(b)
+	if a.supportOrders != 0 {
+		t.Fatalf("under way: %d orders, want none (a guarding radar would be re-sent)", a.supportOrders)
+	}
+	b.O.Own[0].Order = aikit.OrderIdle
+	a.support(b)
+	if m := a.sup[b.O.Own[0].H]; a.supportOrders != 1 || m.ward != b.O.Own[1].H {
+		t.Fatalf("idle and far: %d orders, ward %d; want one move to %d", a.supportOrders, m.ward, b.O.Own[1].H)
+	}
+	b.O.Own[0].X, b.O.Own[0].Z = 1000, 1100
+	b.Tick += supportRetry
+	a.support(b)
+	if a.supportOrders != 1 {
+		t.Errorf("idle near its ward: %d orders, want no new one", a.supportOrders)
 	}
 }
 

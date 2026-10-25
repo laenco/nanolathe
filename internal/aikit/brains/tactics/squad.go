@@ -783,8 +783,14 @@ func (a *Army) runEngage(b *core.Board, s *squad) {
 		a.runGather(b, s)
 		return
 	}
+	walled, gone := a.walls(b, s)
+	if gone {
+		return
+	}
 	a.withdrawDamaged(b, s)
-	if a.focusFire(b, s) {
+	// A walled squad's breakers fire at the wall; focus fire would send
+	// them after enemies on the far side of it.
+	if !walled && a.focusFire(b, s) {
 		return
 	}
 	a.engageOrders(b, s)
@@ -799,8 +805,12 @@ func (a *Army) engageOrders(b *core.Board, s *squad) {
 	a.tmp = a.tmp[:0]
 	for _, i := range s.members {
 		u := &o.Own[i]
-		if a.units[u.H].withdraw != 0 {
+		um := &a.units[u.H]
+		if um.withdraw != 0 {
 			continue
+		}
+		if s.wallPiece && (um.ordKind == okBreach && um.ordX == s.wallX && um.ordZ == s.wallZ || um.ordKind == okHold) {
+			continue // breaking the wall, or waiting behind the breach (walls.go)
 		}
 		if aikit.Dist2(u.X, u.Z, s.cx, s.cz) > stragglerDist*stragglerDist {
 			continue

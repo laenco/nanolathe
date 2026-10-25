@@ -37,6 +37,7 @@ type nlDraft struct {
 	// copy to the shell (DESIGN_INTERFACE_HUD_INPUT §3.6 "Rebinding").
 	keys          *input.KeyMap
 	interfaceType int
+	language      int // index into i18n.Languages (language.go)
 	// restrictions is the unit restriction set's canonical String
 	// (docs/DESIGN_MODS_MUTATORS.md §15.9), "" for none: a string keeps the
 	// draft comparable, and two sets with equal strings are Equal.
@@ -287,6 +288,7 @@ func (s *nlScreen) gameCards() []nlCard {
 			enhanced: true,
 		},
 		s.sidebarCard(),
+		s.languageCard(),
 	}
 }
 
@@ -329,6 +331,7 @@ var nlMutatorPics = map[string][]string{
 	"areaOfEffect": {"armsilo", "corsilo"},
 	"fireRate":     {"armpw", "armllt"},
 	"unitSpeed":    {"armflash", "armfast"},
+	"builderSpeed": {"armck", "armcv"},
 	"sight":        {"armrad", "armpeep"},
 	"radar":        {"armarad", "armrad"},
 }
@@ -336,37 +339,37 @@ var nlMutatorPics = map[string][]string{
 var nlMutatorScene = map[string]string{
 	"buildSpeed": "construct", "buildCost": "construct", "income": "construct", "salvage": "salvage",
 	"health": "armor", "damage": "armor", "fireRate": "armor", "areaOfEffect": "blast",
-	"unitSpeed": "march", "sight": "sight", "radar": "sight",
+	"unitSpeed": "march", "builderSpeed": "construct", "sight": "sight", "radar": "sight",
 }
 
 func (s *nlScreen) mutatorCards() []nlCard {
 	var cards []nlCard
-	labels := make([]string, len(content.MutatorSteps))
-	for i, f := range content.MutatorSteps {
-		labels[i] = "×" + f.String()
-	}
 	for _, info := range content.MutatorCatalog() {
+		// Each mutator steps through its own closed list; Builder speed's
+		// differs from the shared one (docs/DESIGN_MODS_MUTATORS.md §6.4).
+		steps := info.Steps
+		labels := make([]string, len(steps))
+		identity := 0
+		for i, f := range steps {
+			labels[i] = "×" + f.String()
+			if f.IsIdentity() {
+				identity = i
+			}
+		}
 		cards = append(cards, nlCard{
 			key: "mut-" + info.Key, label: info.Label, pics: nlMutatorPics[info.Key], kind: nlStepper, steps: labels,
 			get: func(d *nlDraft) int {
 				f, _ := d.mutators.Factor(info.Key)
-				for i, step := range content.MutatorSteps {
+				for i, step := range steps {
 					if f == step || (f.IsIdentity() && step.IsIdentity()) {
 						return i
 					}
 				}
-				return 3
+				return identity
 			},
-			set: func(d *nlDraft, v int) { _ = d.mutators.SetFactor(info.Key, content.MutatorSteps[v]) },
+			set: func(d *nlDraft, v int) { _ = d.mutators.SetFactor(info.Key, steps[v]) },
 			// Compare sets the factor beside ×1: two scenes, side by side.
-			compare: func(d *nlDraft, v int) (int, bool) {
-				for i, step := range content.MutatorSteps {
-					if step.IsIdentity() {
-						return i, v != i
-					}
-				}
-				return 0, false
-			},
+			compare: func(d *nlDraft, v int) (int, bool) { return identity, v != identity },
 			desc: func(*nlDraft, int) string {
 				return info.Description + " Mutators apply under every rule set, Strict 3.1 included."
 			},

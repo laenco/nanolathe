@@ -137,14 +137,16 @@ func TestProTAContentSetCompilesUnderItsProfile(t *testing.T) {
 		t.Fatalf("compiled units = %d, want the inventory's 317", len(catalog.Units))
 	}
 	assertLargeLOSTableCompiled(t, catalog)
-	// The retail caps still refuse the same content, which is what keeps the
-	// raised caps a profile decision rather than a change to retail admission.
-	if _, retailErr := content.Compile(view); retailErr == nil {
-		t.Fatal("retail read caps no longer refuse ProTA's enlarged LOS table")
+	// Isolate the old stock-sized read budget: the baseline now admits this
+	// file too, while a caller that explicitly keeps 1 MiB must still refuse it.
+	stockLOSCap := content.LimitsFromProfile(profile.Limits)
+	stockLOSCap.LOSBytes = 1 << 20
+	if _, stockErr := content.CompileLOSTables(view, stockLOSCap); stockErr == nil {
+		t.Fatal("a stock-sized battle-table read cap admitted ProTA's enlarged LOS table")
 	} else {
 		for _, want := range []string{"logical path gamedata/los.tdf", "exceeds read limit"} {
-			if !strings.Contains(retailErr.Error(), want) {
-				t.Fatalf("retail compile error %q is not the read-cap refusal: it lacks %q", retailErr, want)
+			if !strings.Contains(stockErr.Error(), want) {
+				t.Fatalf("stock-sized LOS compile error %q is not the read-cap refusal: it lacks %q", stockErr, want)
 			}
 		}
 	}
@@ -152,9 +154,9 @@ func TestProTAContentSetCompilesUnderItsProfile(t *testing.T) {
 
 // TestEscalationReadCapsAdmitItsMapAndLOSTable is the E3 statement for TA:
 // Escalation, whose 19.3 MB `[esc] dark prime.tnt` and 2.4 MB `los.tdf` are
-// both larger than a retail install is sized for. Under the profile's caps
-// both are read; under the retail caps both are refused, which is what keeps
-// the raised caps a profile decision rather than a change to retail admission.
+// both larger than the former stock-sized read budgets. Under the profile's
+// caps both are read; lowering only the relevant byte cap refuses that file
+// without changing the profile's definition domain or other limits.
 //
 // The whole-catalog compile is a separate statement below: unused feature
 // definitions do not require their model until a caller requests the feature.
@@ -175,34 +177,32 @@ func TestEscalationReadCapsAdmitItsMapAndLOSTable(t *testing.T) {
 	// Deliberately expose only FSOps to exercise the capped fallback, rather
 	// than depending on a wrapper accidentally hiding RangeReader.
 	wholeFileView := struct{ vfs.FSOps }{view}
-	if _, err := content.CompileMaps(wholeFileView); err == nil {
-		t.Fatal("the retail map read cap admitted Escalation's oversize terrain file")
+	// Keep the profile's definition domain so its unit catalog reaches the
+	// map reader; lower only the byte budget whose refusal is being checked.
+	const stockTNTBytes, stockLOSBytes = 16 << 20, 1 << 20
+	mapCapHeldBack := limits
+	mapCapHeldBack.TNTBytes = stockTNTBytes
+	if _, err := content.CompileWithOptions(wholeFileView, content.Options{Limits: mapCapHeldBack}); err == nil {
+		t.Fatal("a stock-sized map read cap admitted Escalation's oversize terrain file")
 	} else {
 		for _, want := range []string{"[esc] dark prime.tnt", "exceeds read limit"} {
 			if !strings.Contains(strings.ToLower(err.Error()), want) {
-				t.Fatalf("retail map compile error %q is not the read-cap refusal: it lacks %q", err, want)
+				t.Fatalf("stock-sized map compile error %q is not the read-cap refusal: it lacks %q", err, want)
 			}
 		}
-	}
-	// The map cap is what admits it and nothing else: the profile's limits with
-	// only that count put back to retail refuse the same file again.
-	mapCapHeldBack := limits
-	mapCapHeldBack.TNTBytes = content.RetailTNTBytes
-	if _, err := content.CompileWithOptions(wholeFileView, content.Options{Limits: mapCapHeldBack}); err == nil {
-		t.Fatal("the retail map read cap admitted Escalation's oversize terrain file")
-	} else if !strings.Contains(strings.ToLower(err.Error()), "[esc] dark prime.tnt") {
-		t.Fatalf("holding the map cap at retail did not stop the compile on that map: %v", err)
 	}
 	if _, err := content.CompileWithOptions(wholeFileView, content.Options{Limits: limits}); err != nil {
 		t.Fatalf("profile cap should admit the whole-file map census: %v", err)
 	}
 
-	if _, err := content.CompileLOSTables(view, content.RetailLimits()); err == nil {
-		t.Fatal("the retail battle-table read cap admitted Escalation's enlarged LOS table")
+	stockLOSCap := limits
+	stockLOSCap.LOSBytes = stockLOSBytes
+	if _, err := content.CompileLOSTables(view, stockLOSCap); err == nil {
+		t.Fatal("a stock-sized battle-table read cap admitted Escalation's enlarged LOS table")
 	} else {
 		for _, want := range []string{"logical path gamedata/los.tdf", "exceeds read limit"} {
 			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("retail LOS compile error %q is not the read-cap refusal: it lacks %q", err, want)
+				t.Fatalf("stock-sized LOS compile error %q is not the read-cap refusal: it lacks %q", err, want)
 			}
 		}
 	}

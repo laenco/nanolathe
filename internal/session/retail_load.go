@@ -10,6 +10,24 @@ import (
 	"github.com/nanolathe-gg/nanolathe/vfs"
 )
 
+// restoreRetailPlayer supplies the registration fields absent from Player%i,
+// then restores its saved scalars [08 R-SKIR-01 §2][08 "Player records"].
+// The caller has validated the slot index. Names and ranks are presentation
+// state; no new save keys or resource/RNG effects are introduced [I6].
+func (s *Session) restoreRetailPlayer(saved save.PlayerSlot) {
+	p := &s.Econ.Players[saved.Index]
+	p.SeedScorePanelRank(saved.Index)
+	saved.ApplyToEconomy(p)
+	p.Exists = true
+	if p.Name == "" && s.Mission != nil && s.Mission.Type == mission.TypeSkirmish {
+		p.Name = s.skirmishPlayerName(p.ControllerState, int(p.Side))
+	}
+	// TODO(question): whether retail reorders these registration ranks by
+	// restored kill counts needs the load fixup trace identified by
+	// [08 R-SKIR-01 §2]. Keep slot order until the established kill path shifts
+	// it, matching economy.Player.SeedScorePanelRank's documented placeholder.
+}
+
 // RetailLoadRoute is the load branch selected by the Summary account. A
 // BetweenMissions scalar selects campaign continuation for kind 1 and fresh
 // battle entry for kind 2; absence selects restoration. The two presence

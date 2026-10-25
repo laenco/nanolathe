@@ -59,7 +59,7 @@ func TestSwiteckBugfixMountsOverTheBaseRetail(t *testing.T) {
 	if len(mount.mounted) != 1 || mount.mounted[0].ID != fix.ID || len(mount.notes) != 0 {
 		t.Fatalf("mounted %+v, notes %q", mount.mounted, mount.notes)
 	}
-	if err := composeAddons(contentprofiles.Retail(), []string{retail}, nil, mount.mounted, mount.factions); err != nil {
+	if err := composeAddons(contentprofiles.Retail(), []string{retail}, nil, mount.mounted, mount.factions, mount.models); err != nil {
 		t.Fatalf("the reference install does not compile with the fix: %v", err)
 	}
 	fixed := readArchiveFile(t, mount.mounted[0].Paths[0], "units/armflash.fbi")
@@ -77,7 +77,7 @@ func TestSwiteckBugfixMountsOverTheBaseRetail(t *testing.T) {
 	}
 	composed := vfs.New()
 	defer composed.Close()
-	if err := composed.MountGameRoots([]vfs.GameRoot{{Dir: retail, Extra: addonExtras(mount.mounted), ExtraTier: addonExtraTier(mount.factions)}}); err != nil {
+	if err := composed.MountGameRoots([]vfs.GameRoot{{Dir: retail, Extra: addonExtras(mount.mounted), ExtraTier: addonExtraTier(mount.factions, mount.models)}}); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := composed.ReadFile("units/armflash.fbi"); err != nil || !bytes.Equal(data, fixed) {
@@ -99,7 +99,7 @@ func TestSwiteckBugfixMountsOverTheBaseRetail(t *testing.T) {
 	}
 	layered := vfs.New()
 	defer layered.Close()
-	if err := layered.MountGameRoots([]vfs.GameRoot{{Dir: linked, Extra: addonExtras(mount.mounted), ExtraTier: addonExtraTier(mount.factions)}}); err != nil {
+	if err := layered.MountGameRoots([]vfs.GameRoot{{Dir: linked, Extra: addonExtras(mount.mounted), ExtraTier: addonExtraTier(mount.factions, mount.models)}}); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := layered.ReadFile("units/armfark.fbi"); err != nil || !bytes.Equal(data, fixedFark) {

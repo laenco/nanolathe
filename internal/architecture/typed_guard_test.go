@@ -553,9 +553,11 @@ var mapFunctionHashes = map[string]string{
 	// service and introduces no iteration. The catalog-key union, its sort and
 	// the order every consumer sees are unchanged (I1).
 	"internal/session/ai_entry.go initializeBattleAI": "fefdb3ef55acccd84956d4a8cfdec7998a8eb4f0c9f8dc7e7b213ab36ea73039",
-	// Re-audited: both immutable membership lists are filtered after the same
-	// sorted builder-key walk; no map-order-dependent decisions were added.
-	"internal/session/mission.go pruneRestrictedBuildMenus": "c3aa02729cb3a830ca92bcefe79a443222aec45bbb113205058dbd0579365b29",
+	// Re-audited: the immutable membership lists and the installed products
+	// are filtered after the same sorted builder-key walk; each list is a
+	// slice walk in its own order, and no map-order-dependent decisions were
+	// added.
+	"internal/session/mission.go pruneRestrictedBuildMenus": "166474bda03242d6710515c18671e3b6da60c12176c40c6a7ac2006e535151b4",
 	// A Modern AI brain's parameter overrides, applied in sorted name order
 	// when the brain is built; a think never reaches it (I1).
 	"internal/aikit/brains/utility/params.go ParseParams":         "4e69b3d510bbaf5e0ae6ad1d6ef0e39443eae75eda7d248adc2a29c386de3e19",

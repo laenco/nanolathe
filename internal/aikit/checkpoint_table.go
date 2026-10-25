@@ -129,5 +129,5 @@ func sameCheckpointUnitInfo(a, b *UnitInfo) bool {
 		a.Speed == b.Speed && a.Sight == b.Sight && a.Radar == b.Radar && a.BuildPower == b.BuildPower && a.BuildRange == b.BuildRange &&
 		a.MetalMake == b.MetalMake && a.EnergyMake == b.EnergyMake && a.WindGen == b.WindGen && a.TidalGen == b.TidalGen && a.EnergyUse == b.EnergyUse &&
 		a.MetalStore == b.MetalStore && a.EnergyStore == b.EnergyStore && a.FootX == b.FootX && a.FootZ == b.FootZ && a.Depth == b.Depth && a.Cap == b.Cap &&
-		a.capSlot == b.capSlot && checkpointTableInfosEqual(a.Builds, b.Builds)
+		a.capSlot == b.capSlot && a.banned == b.banned && checkpointTableInfosEqual(a.Builds, b.Builds)
 }

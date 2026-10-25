@@ -201,6 +201,15 @@ type Feature struct {
 	Defensive bool
 }
 
+// Wall is a wall piece — the finished feature of a wall product — near a
+// point the brain watched (Kit.WatchWalls), as the executor saw it when the
+// brain's last batch was applied (walls.go).
+type Wall struct {
+	X, Z         int32 // footprint centre, world units
+	FootX, FootZ int32 // cells
+	Reclaimable  bool
+}
+
 // CapCount is the observer's standing against one capped definition's cap
 // (docs/DESIGN_SESSIONS_AI_SAVE.md "Modern AI restriction caps").
 type CapCount struct {
@@ -247,6 +256,11 @@ type Obs struct {
 	// FeaturesTick is when. Map features there are in the owner's view.
 	Features     []Feature
 	FeaturesTick uint32
+	// Walls are the wall pieces within WallRadius of the points the
+	// previous think watched (Kit.WatchWalls), listed when its batch was
+	// applied at WallsTick.
+	Walls     []Wall
+	WallsTick uint32
 	// Capped holds one record per capped definition (Table.Capped), in
 	// table order; empty when the battle caps nothing.
 	Capped []CapCount
@@ -257,6 +271,14 @@ const (
 	FeatureRadius = 1600
 	FeatureEvery  = 300
 	maxFeatures   = 512
+)
+
+// WallRadius bounds Obs.Walls around each watched point; a think watches at
+// most maxWallWatch points and the list holds at most maxWalls pieces.
+const (
+	WallRadius   = 384
+	maxWallWatch = 8
+	maxWalls     = 256
 )
 
 // OwnByHandle finds an own unit by handle (linear; brains index their own).

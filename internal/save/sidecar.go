@@ -15,24 +15,26 @@ import (
 
 // The save sidecar is a Nanolathe file beside a retail bank that records the
 // match selection the bank was written under: the mod, content profile, rule
-// set, Community sources and entry table, unit limit, mutators and unit
-// restrictions (docs/DESIGN_MODS_MUTATORS.md §7, §15.5). The bank's bytes are unchanged; the
-// retail enumerator lists only `*.SAV`, so the sidecar never shows as a save.
+// set, Community sources and entry table, unit limit, mutators, unit
+// restrictions and Survival director (docs/DESIGN_MODS_MUTATORS.md §7,
+// §15.5). The bank's bytes are unchanged; the retail enumerator lists only
+// `*.SAV`, so the sidecar never shows as a save.
 
 // SidecarSuffix is appended to the bank's full file name:
 // `SAVEGAME/<name>.SAV` gets `SAVEGAME/<name>.SAV.nanolathe.json` (§7.1).
 const SidecarSuffix = ".nanolathe.json"
 
-// SidecarSchema is the layout of every sidecar that records no unit
-// restrictions, so older builds keep reading those saves (§7.2).
+// SidecarSchema is the layout of a sidecar without unit restrictions,
+// official add-ons or a Survival director, so older builds keep reading
+// those saves (§7.2).
 const SidecarSchema = 1
 
 // SidecarSchemaRestrictions is the layout of a sidecar that records unit
 // restrictions (§15.5, proposal R-P7). A build that reads only schema 1
 // refuses it, where it would otherwise load the bank without the
-// restrictions and misread the definition indices it was written with. This
-// build reads both; a sidecar with any other schema is refused rather than
-// half-read (§7.3).
+// restrictions and misread the definition indices it was written with.
+// Later schemas also carry restrictions; an unsupported schema is refused
+// rather than half-read (§7.3).
 const SidecarSchemaRestrictions = 2
 
 // SidecarSchemaAddons is the layout of a sidecar that records official
@@ -41,8 +43,32 @@ const SidecarSchemaRestrictions = 2
 // without the definitions it was written with.
 const SidecarSchemaAddons = 3
 
-// sidecarMaxBytes bounds a read: a sidecar is a few kilobytes at most.
+// SidecarSchemaSurvival is the layout of a sidecar that records a Survival
+// director, with or without unit restrictions and official add-ons (§7.2).
+// A build that cannot restore the director refuses it rather than loading
+// the bank as an ordinary skirmish.
+const SidecarSchemaSurvival = 4
+
+// SidecarSchemaGeneratedMap is the layout of a sidecar that records the
+// recipe of the generated map its battle was played on, with or without unit
+// restrictions, official add-ons and a Survival director
+// (docs/DESIGN_MAP_GENERATOR.md §10). A build that cannot make the map again
+// refuses it rather than loading the bank on whatever map has that name.
+const SidecarSchemaGeneratedMap = 5
+
+// sidecarMaxBytes bounds ordinary selection records. A Survival director also
+// carries the whole planned wave and its history, so schema 4 has a larger
+// bounded allowance (DESIGN_MODS_MUTATORS §7.2). Writers enforce the same bound
+// as readers before replacing any file.
 const sidecarMaxBytes = 1 << 20
+const survivalSidecarMaxBytes = 16 << 20
+
+func sidecarByteLimit(schema int) int {
+	if schema == SidecarSchemaSurvival || schema == SidecarSchemaGeneratedMap {
+		return survivalSidecarMaxBytes
+	}
+	return sidecarMaxBytes
+}
 
 // SidecarMod names the installed mod a save was written under.
 type SidecarMod struct {
@@ -138,16 +164,34 @@ type Sidecar struct {
 	Mutators        map[string]string `json:"mutators"`
 	// Restrictions are the battle's unit restrictions, canonical unit key to
 	// count, e.g. {"armkrog": 0, "armpw": 20} (§15.5); absent when it had
-	// none. Their presence alone makes the file schema 2.
+	// none. Without add-ons or Survival, their presence makes the file schema 2.
 	Restrictions map[string]int `json:"restrictions,omitempty"`
 	// Addons are the official add-ons the battle's content mounted from the
 	// add-on library (§5.7); absent when it had none. Their presence alone
-	// makes the file schema 3.
+	// makes the file schema 3 when there is no Survival director.
 	Addons []SidecarAddon `json:"addons,omitempty"`
 	// AI is the Modern AI controllers' record (session.AIControllers),
 	// kept as raw JSON so this package stays ignorant of its shape; absent
 	// when the battle had no computer player.
 	AI json.RawMessage `json:"ai,omitempty"`
+	// Survival is a Survival battle's wave director
+	// (session.SurvivalRecord, docs/DESIGN_SURVIVAL.md §11), raw like AI;
+	// absent in every other battle. Its presence makes the file schema 4.
+	Survival json.RawMessage `json:"survival,omitempty"`
+	// SurvivalBest is the host's personal-best eligibility record
+	// (docs/DESIGN_SURVIVAL.md §11), raw like Survival; valid only with a
+	// Survival director. The save package does not interpret its shape.
+	SurvivalBest json.RawMessage `json:"survivalBest,omitempty"`
+	// AlliedSight records that a skirmish's teams shared sight and radar
+	// (docs/DESIGN_SESSIONS_AI_SAVE.md "Modern allied sight"); absent when
+	// they did not. Like `ai` it leaves the schema alone: a build that does
+	// not know it loads the battle with sight kept separate, which is a
+	// presentation of the same simulation rather than a misread bank.
+	AlliedSight bool `json:"alliedSight,omitempty"`
+	// GeneratedMap is the recipe of the generated map the battle was played
+	// on (docs/DESIGN_MAP_GENERATOR.md §10), raw like AI: the command owns
+	// its shape. Its presence makes the file schema 5.
+	GeneratedMap json.RawMessage `json:"generatedMap,omitempty"`
 }
 
 // SidecarPath is the sidecar file of the bank at bankPath.
@@ -155,8 +199,10 @@ func SidecarPath(bankPath string) string { return bankPath + SidecarSuffix }
 
 // WriteSidecar writes the sidecar of the bank at bankPath through a
 // temporary file and a rename, so a reader never sees half a file (§7.1).
-// It is schema 3 when it records official add-ons, else schema 2 when it
-// records unit restrictions, and schema 1 otherwise (§15.5, §5.7).
+// It is schema 5 when it records a generated map's recipe, else schema 4
+// when it records a Survival director, else schema 3 when it records
+// official add-ons, else schema 2 when it records unit restrictions, and
+// schema 1 otherwise (§7.2, §15.5, §5.7).
 func WriteSidecar(bankPath string, s Sidecar) error {
 	s.Schema = SidecarSchema
 	if len(s.Restrictions) != 0 {
@@ -169,6 +215,15 @@ func WriteSidecar(bankPath string, s Sidecar) error {
 	} else {
 		s.Addons = nil
 	}
+	if len(s.Survival) != 0 {
+		s.Schema = SidecarSchemaSurvival
+	}
+	if len(s.GeneratedMap) != 0 {
+		s.Schema = SidecarSchemaGeneratedMap
+	}
+	if err := validateSurvivalSidecar(s); err != nil {
+		return sidecarError(SidecarPath(bankPath), err.Error())
+	}
 	if s.Mutators == nil {
 		s.Mutators = map[string]string{}
 	}
@@ -178,6 +233,9 @@ func WriteSidecar(bankPath string, s Sidecar) error {
 	}
 	data = append(data, '\n')
 	target := SidecarPath(bankPath)
+	if len(data) > sidecarByteLimit(s.Schema) {
+		return sidecarError(target, fmt.Sprintf("file is larger than %d MiB", sidecarByteLimit(s.Schema)>>20))
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".*")
 	if err != nil {
 		return err
@@ -204,8 +262,11 @@ func WriteSidecar(bankPath string, s Sidecar) error {
 // that another schema wrote, is an error: loading it as if it were absent
 // would silently drop the selection it records. So is a schema 1 sidecar
 // that names unit restrictions, a schema 2 one without a non-empty set
-// (§15.5), and one that names add-ons in any schema but 3, or schema 3
-// without them (§5.7).
+// (§15.5), and one that names add-ons in any schema but 3 or 4, or schema 3
+// without them (§5.7). A Survival record requires schema 4 or 5, and schema
+// 4 requires a non-null director; its host eligibility record requires that
+// same director (§7.2). A generated map's recipe requires schema 5, and
+// schema 5 requires one (DESIGN_MAP_GENERATOR §10).
 func ReadSidecar(bankPath string) (Sidecar, bool, error) {
 	path := SidecarPath(bankPath)
 	file, err := os.Open(path)
@@ -216,12 +277,23 @@ func ReadSidecar(bankPath string) (Sidecar, bool, error) {
 		return Sidecar{}, false, err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, sidecarMaxBytes+1))
+	data, err := io.ReadAll(io.LimitReader(file, survivalSidecarMaxBytes+1))
 	if err != nil {
 		return Sidecar{}, false, err
 	}
-	if len(data) > sidecarMaxBytes {
-		return Sidecar{}, false, sidecarError(path, "file is larger than 1 MiB")
+	if len(data) > survivalSidecarMaxBytes {
+		return Sidecar{}, false, sidecarError(path, "file is larger than 16 MiB")
+	}
+	// Decode just the schema before allocating the record's arrays and maps.
+	// Older schemas retain their existing limit and compatibility guarantee.
+	var header struct {
+		Schema int `json:"schema"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return Sidecar{}, false, sidecarError(path, err.Error())
+	}
+	if len(data) > sidecarByteLimit(header.Schema) {
+		return Sidecar{}, false, sidecarError(path, fmt.Sprintf("file is larger than %d MiB", sidecarByteLimit(header.Schema)>>20))
 	}
 	var s Sidecar
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -234,16 +306,23 @@ func ReadSidecar(bankPath string) (Sidecar, bool, error) {
 	if err := json.Unmarshal(data, &present); err != nil {
 		return Sidecar{}, false, sidecarError(path, err.Error())
 	}
+	if err := validateSurvivalSidecar(s); err != nil {
+		return Sidecar{}, false, sidecarError(path, err.Error())
+	}
 	switch {
 	case s.Schema == SidecarSchema && present.Restrictions != nil:
 		return Sidecar{}, false, sidecarError(path, "schema 1 with unit restrictions")
 	case s.Schema == SidecarSchemaRestrictions && len(s.Restrictions) == 0:
 		return Sidecar{}, false, sidecarError(path, "schema 2 without unit restrictions")
-	case s.Schema != SidecarSchemaAddons && present.Addons != nil:
+	case s.Schema != SidecarSchemaAddons && s.Schema != SidecarSchemaSurvival && s.Schema != SidecarSchemaGeneratedMap && present.Addons != nil:
 		return Sidecar{}, false, sidecarError(path, fmt.Sprintf("schema %d with official add-ons", s.Schema))
 	case s.Schema == SidecarSchemaAddons && len(s.Addons) == 0:
 		return Sidecar{}, false, sidecarError(path, "schema 3 without official add-ons")
-	case s.Schema != SidecarSchema && s.Schema != SidecarSchemaRestrictions && s.Schema != SidecarSchemaAddons:
+	case s.Schema != SidecarSchemaGeneratedMap && len(s.GeneratedMap) != 0:
+		return Sidecar{}, false, sidecarError(path, fmt.Sprintf("schema %d with a generated map", s.Schema))
+	case s.Schema == SidecarSchemaGeneratedMap && (len(s.GeneratedMap) == 0 || bytes.Equal(bytes.TrimSpace(s.GeneratedMap), []byte("null"))):
+		return Sidecar{}, false, sidecarError(path, "schema 5 without a generated map")
+	case s.Schema != SidecarSchema && s.Schema != SidecarSchemaRestrictions && s.Schema != SidecarSchemaAddons && s.Schema != SidecarSchemaSurvival && s.Schema != SidecarSchemaGeneratedMap:
 		return Sidecar{}, false, sidecarError(path, fmt.Sprintf("schema %d", s.Schema))
 	}
 	for _, a := range s.Addons {
@@ -252,6 +331,24 @@ func ReadSidecar(bankPath string) (Sidecar, bool, error) {
 		}
 	}
 	return s, true, nil
+}
+
+// validateSurvivalSidecar enforces the schema boundary without interpreting
+// the director or host eligibility record. Their owners validate those
+// records' versions and contents (docs/DESIGN_MODS_MUTATORS.md §7.2).
+func validateSurvivalSidecar(s Sidecar) error {
+	null := bytes.Equal(bytes.TrimSpace(s.Survival), []byte("null"))
+	switch {
+	case s.Schema != SidecarSchemaSurvival && s.Schema != SidecarSchemaGeneratedMap && len(s.Survival) != 0:
+		return fmt.Errorf("schema %d with a Survival director", s.Schema)
+	case s.Schema == SidecarSchemaSurvival && (len(s.Survival) == 0 || null):
+		return errors.New("schema 4 without a non-null Survival director")
+	case s.Schema == SidecarSchemaGeneratedMap && len(s.Survival) != 0 && null:
+		return errors.New("schema 5 with a null Survival director")
+	case len(s.Survival) == 0 && len(s.SurvivalBest) != 0:
+		return errors.New("survival best-score eligibility without a Survival director")
+	}
+	return nil
 }
 
 // RemoveSidecar deletes the sidecar of the bank at bankPath, if any. It is
@@ -265,5 +362,5 @@ func RemoveSidecar(bankPath string) error {
 }
 
 func sidecarError(path, what string) error {
-	return fmt.Errorf("nanolathe: save sidecar unreadable: %s: logical path %s, providers searched [save directory], expected a schema %d Nanolathe sidecar, schema %d with unit restrictions, or schema %d with official add-ons", what, path, SidecarSchema, SidecarSchemaRestrictions, SidecarSchemaAddons)
+	return fmt.Errorf("nanolathe: save sidecar unreadable: %s: logical path %s, providers searched [save directory], expected a schema %d Nanolathe sidecar, schema %d with unit restrictions, schema %d with official add-ons, or schema %d with a Survival director", what, path, SidecarSchema, SidecarSchemaRestrictions, SidecarSchemaAddons, SidecarSchemaSurvival)
 }

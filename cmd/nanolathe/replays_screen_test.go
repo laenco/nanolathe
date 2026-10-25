@@ -152,6 +152,7 @@ func TestReplayListingText(t *testing.T) {
 	}
 	for err, text := range map[error]string{
 		replay.ErrUnsupportedVersion:                                                "a newer version of Nanolathe recorded it.",
+		replay.ErrUnsupportedFeature:                                                "it needs replay features this version does not support.",
 		fmt.Errorf("x: %w", os.ErrNotExist):                                         "the file is no longer there.",
 		errors.New("permission denied"):                                             "the file cannot be read.",
 		fmt.Errorf("%w: %w", replay.ErrIncompatible, session.ErrMatchMapMismatch):   "your copy of the map differs from the recording's.",

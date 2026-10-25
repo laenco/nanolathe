@@ -5,6 +5,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/nanolathe-gg/nanolathe/formats"
 	"github.com/nanolathe-gg/nanolathe/internal/client"
@@ -189,7 +190,7 @@ func (h *retailBattleHUD) drawScoreRow(c *client.Client, b *battleSession, cur *
 		nameY, countersY = int(y)+1, int(y)+26
 		h.drawScoreText(c, "Defeated", int(rect.X0)+9, int(y)+13, 0)
 	}
-	h.drawScoreText(c, row.Name, int(rect.X0)+9, nameY, 0)
+	h.drawScoreText(c, b.scorePlayerLabel(row), int(rect.X0)+9, nameY, 0)
 	kills, losses := hud.ScoreCounters(row, commanderDeathOption(b))
 	killText := fmt.Sprintf("%d", kills)
 	lossText := fmt.Sprintf("%d", losses)
@@ -200,6 +201,20 @@ func (h *retailBattleHUD) drawScoreRow(c *client.Client, b *battleSession, cur *
 	}
 	h.drawScoreText(c, killText, int(rect.X0)+9, countersY, killShade)
 	h.drawScoreText(c, lossText, int(rect.X0)+119-retailGAFTextWidth(h.modalFont, lossText)-2, countersY, lossShade)
+}
+
+// scorePlayerLabel identifies a named player's faction using the committed
+// side ordinal, including after a save load. This is host presentation only;
+// the player's actual name and save records stay unchanged [I6].
+func (b *battleSession) scorePlayerLabel(row frame.PlayerRow) string {
+	if b == nil || b.cat == nil || int(row.Side) >= len(b.cat.Sides) || b.cat.Sides[row.Side] == nil {
+		return row.Name
+	}
+	faction := strings.TrimSpace(b.cat.Sides[row.Side].Name)
+	if faction == "" || strings.EqualFold(strings.TrimSpace(row.Name), faction) {
+		return row.Name
+	}
+	return fmt.Sprintf("%s (%s)", row.Name, faction)
 }
 
 // sideLogoFrame resolves the side-logo frame for a lobby colour byte. Both

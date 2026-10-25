@@ -93,7 +93,7 @@ func (v ClassicApplicationIntent) WriteCheckpoint(e *checkpoint.Encoder) error {
 // ModernIntentKinds is the Modern command vocabulary's size: aikit.CmdKind
 // 1 through this (aikit's TestModernIntentKindsCoverTheVocabulary holds
 // the two together).
-const ModernIntentKinds = 20
+const ModernIntentKinds = 21
 
 // WriteCheckpoint retains the existing Modern command vocabulary and all
 // fixed operands, including batch RowNear (DESIGN_MULTIPLAYER §16.3.23).

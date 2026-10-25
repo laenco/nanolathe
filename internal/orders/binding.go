@@ -268,6 +268,13 @@ type FeatureView struct {
 	Energy          int32
 	Reclaimable     bool
 	Autoreclaimable bool
+	// Animating is derived, never authored: the feature has a live event
+	// record — burning, dying or playing its reclaim sequence. The cell keeps
+	// its definition until the sequence ends and the feature phase stamps the
+	// successor [05 R-FEAT-01 §5][05 R-FEAT-01 §10], and the payout guard
+	// refuses such a sprite feature [05 R-FEAT-01 §15]. Only Modern patrol
+	// selection reads it (DESIGN_UNITS_ORDERS_COB "Smarter patrol — 2026-10-22").
+	Animating bool
 }
 
 // WorldQueryAdapter owns deterministic target/feature lookup and geometry

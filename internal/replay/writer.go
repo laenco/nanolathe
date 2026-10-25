@@ -53,6 +53,9 @@ func NewWriter(out io.Writer, h Header) (*Writer, error) {
 	if out == nil {
 		return nil, fmt.Errorf("nanolathe: replay writer refused: logical path output, providers searched [replay format v%d], expected an output", FormatVersion)
 	}
+	if h.FileVersion() != FormatVersion {
+		return nil, fmt.Errorf("%w: logical path replay writer, providers searched [replay header v%d], expected a new version-%d recording header", ErrUnsupportedVersion, h.FileVersion(), FormatVersion)
+	}
 	header, err := encodeHeader(h)
 	if err != nil {
 		return nil, err

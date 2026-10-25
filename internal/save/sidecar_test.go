@@ -130,6 +130,10 @@ func TestSidecarCarriesTheAIRecord(t *testing.T) {
 	if got, _, err := ReadSidecar(plain); err != nil || len(got.AI) != 0 {
 		t.Fatalf("a sidecar without the record read back %q (err %v)", got.AI, err)
 	}
+	raw, err := os.ReadFile(SidecarPath(plain))
+	if err != nil || strings.Contains(string(raw), "survival") {
+		t.Fatalf("plain sidecar = %s, %v; want no Survival fields", raw, err)
+	}
 }
 
 // A sidecar is written as schema 2 exactly when it records unit
@@ -209,5 +213,186 @@ func TestSidecarSchemaFollowsAddons(t *testing.T) {
 		if _, ok, err := ReadSidecar(bank); err == nil || ok || !strings.Contains(err.Error(), "unreadable: "+tc.want) {
 			t.Fatalf("%s: ReadSidecar = (%v, %v), want a refusal for %s", name, ok, err, tc.want)
 		}
+	}
+}
+
+// A Survival director takes schema precedence over restrictions and add-ons,
+// so an older build refuses the battle rather than silently restoring an
+// ordinary skirmish. Its director and host eligibility record stay opaque
+// to this package (docs/DESIGN_MODS_MUTATORS.md §7.2).
+func TestSidecarSchemaFollowsSurvival(t *testing.T) {
+	director := json.RawMessage(`{"version":1,"wave":7}`)
+	best := json.RawMessage(`{"version":1,"eligible":true,"setup":"saved-setup"}`)
+	addons := []SidecarAddon{{ID: "cavedog-bonus-units", Version: "original", SHA256: strings.Repeat("ab", 32)}}
+	for _, tc := range []struct {
+		name         string
+		restrictions map[string]int
+		addons       []SidecarAddon
+		best         json.RawMessage
+	}{
+		{name: "director"},
+		{name: "restrictions", restrictions: map[string]int{"armpw": 20}, best: best},
+		{name: "addons", addons: addons, best: best},
+		{name: "both", restrictions: map[string]int{"armpw": 20}, addons: addons, best: best},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bank := filepath.Join(t.TempDir(), "survival.SAV")
+			want := Sidecar{
+				Profile: "nanolathe-1.0", Mutators: map[string]string{},
+				Restrictions: tc.restrictions, Addons: tc.addons,
+				Survival: director, SurvivalBest: tc.best,
+			}
+			if err := WriteSidecar(bank, want); err != nil {
+				t.Fatal(err)
+			}
+			got, ok, err := ReadSidecar(bank)
+			if err != nil || !ok {
+				t.Fatalf("ReadSidecar = (%v, %v)", ok, err)
+			}
+			// Indentation is a writer concern; the raw records' JSON values
+			// survive without the save package knowing their shape.
+			for _, record := range []struct {
+				got  *json.RawMessage
+				want json.RawMessage
+			}{
+				{&got.Survival, want.Survival},
+				{&got.SurvivalBest, want.SurvivalBest},
+			} {
+				if len(record.want) == 0 {
+					if len(*record.got) != 0 {
+						t.Fatalf("read unexpected record %s", *record.got)
+					}
+					continue
+				}
+				var have, expected any
+				if err := json.Unmarshal(*record.got, &have); err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal(record.want, &expected); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(have, expected) {
+					t.Fatalf("read record %s, want %s", *record.got, record.want)
+				}
+				*record.got = record.want
+			}
+			want.Schema = SidecarSchemaSurvival
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("read back %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+// Every earlier schema rejects even a null Survival field. Schema 4 requires
+// the director, and the host eligibility record cannot exist without it
+// (docs/DESIGN_MODS_MUTATORS.md §7.2).
+func TestSidecarRefusesUnsupportedSurvivalCombinations(t *testing.T) {
+	addon := `"addons":[{"id":"a","version":"1","sha256":"` + strings.Repeat("0", 64) + `"}]`
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"schema 1 director", `{"schema":1,"survival":{}}`, "schema 1 with a Survival director"},
+		{"schema 1 null", `{"schema":1,"survival":null}`, "schema 1 with a Survival director"},
+		{"schema 2 director", `{"schema":2,"restrictions":{"armpw":20},"survival":{}}`, "schema 2 with a Survival director"},
+		{"schema 2 null", `{"schema":2,"restrictions":{"armpw":20},"survival":null}`, "schema 2 with a Survival director"},
+		{"schema 3 director", `{"schema":3,` + addon + `,"survival":{}}`, "schema 3 with a Survival director"},
+		{"schema 3 null", `{"schema":3,` + addon + `,"survival":null}`, "schema 3 with a Survival director"},
+		{"schema 4 missing", `{"schema":4}`, "schema 4 without a non-null Survival director"},
+		{"schema 4 null", `{"schema":4,"survival":null}`, "schema 4 without a non-null Survival director"},
+		{"schema 1 best only", `{"schema":1,"survivalBest":{}}`, "survival best-score eligibility without a Survival director"},
+		{"schema 1 null best", `{"schema":1,"survivalBest":null}`, "survival best-score eligibility without a Survival director"},
+		{"schema 2 best only", `{"schema":2,"restrictions":{"armpw":20},"survivalBest":{}}`, "survival best-score eligibility without a Survival director"},
+		{"schema 3 best only", `{"schema":3,` + addon + `,"survivalBest":{}}`, "survival best-score eligibility without a Survival director"},
+		{"schema 4 best only", `{"schema":4,"survivalBest":{}}`, "schema 4 without a non-null Survival director"},
+		{"future schema", `{"schema":6}`, "schema 6"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bank := filepath.Join(t.TempDir(), "survival.SAV")
+			if err := os.WriteFile(SidecarPath(bank), []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok, err := ReadSidecar(bank); err == nil || ok || !strings.Contains(err.Error(), "unreadable: "+tc.want) {
+				t.Fatalf("ReadSidecar = (%v, %v), want a refusal for %s", ok, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestWriteSidecarRefusesInvalidSurvivalCombinations(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		s    Sidecar
+	}{
+		{"null director", Sidecar{Survival: json.RawMessage(`null`)}},
+		{"spaced null director", Sidecar{Survival: json.RawMessage(" \nnull\t ")}},
+		{"best without director", Sidecar{SurvivalBest: json.RawMessage(`{}`)}},
+		{"null best without director", Sidecar{SurvivalBest: json.RawMessage(`null`)}},
+		{"best with null director", Sidecar{Survival: json.RawMessage(`null`), SurvivalBest: json.RawMessage(`{}`)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bank := filepath.Join(dir, "survival.SAV")
+			if err := WriteSidecar(bank, tc.s); err == nil {
+				t.Fatal("WriteSidecar succeeded, want a refusal")
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("files after refused write: %v, err %v; want none", entries, err)
+			}
+		})
+	}
+}
+
+// A generated map's recipe makes the file schema 5, whatever else it
+// records, and comes back as written; schema 5 requires the recipe and no
+// earlier schema may carry one (docs/DESIGN_MAP_GENERATOR.md §10).
+func TestSidecarSchemaFollowsGeneratedMap(t *testing.T) {
+	recipe := json.RawMessage(`{"format":1,"generator":1,"code":"test_world-2-0-6-1-1-1-b-v1"}`)
+	for _, tc := range []struct {
+		name string
+		s    Sidecar
+	}{
+		{"recipe", Sidecar{GeneratedMap: recipe}},
+		{"with the rest", Sidecar{GeneratedMap: recipe, Restrictions: map[string]int{"armpw": 20},
+			Addons:   []SidecarAddon{{ID: "cavedog-bonus-units", Version: "original", SHA256: strings.Repeat("ab", 32)}},
+			Survival: json.RawMessage(`{"version":1}`), SurvivalBest: json.RawMessage(`{"version":1}`)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bank := filepath.Join(t.TempDir(), "generated.SAV")
+			if err := WriteSidecar(bank, tc.s); err != nil {
+				t.Fatal(err)
+			}
+			got, ok, err := ReadSidecar(bank)
+			if err != nil || !ok || got.Schema != SidecarSchemaGeneratedMap {
+				t.Fatalf("ReadSidecar = (schema %d, %v, %v), want schema 5", got.Schema, ok, err)
+			}
+			var have, want any
+			if json.Unmarshal(got.GeneratedMap, &have) != nil || json.Unmarshal(recipe, &want) != nil || !reflect.DeepEqual(have, want) {
+				t.Fatalf("read recipe %s, want %s", got.GeneratedMap, recipe)
+			}
+			if len(tc.s.Survival) != 0 && len(got.Survival) == 0 {
+				t.Fatal("the Survival director was dropped")
+			}
+		})
+	}
+	for _, tc := range []struct{ name, body, want string }{
+		{"schema 5 without", `{"schema":5}`, "schema 5 without a generated map"},
+		{"schema 5 null", `{"schema":5,"generatedMap":null}`, "schema 5 without a generated map"},
+		{"schema 4 with", `{"schema":4,"survival":{},"generatedMap":{}}`, "schema 4 with a generated map"},
+		{"schema 1 with", `{"schema":1,"generatedMap":{}}`, "schema 1 with a generated map"},
+		{"schema 5 null director", `{"schema":5,"generatedMap":{},"survival":null}`, "schema 5 with a null Survival director"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bank := filepath.Join(t.TempDir(), "generated.SAV")
+			if err := os.WriteFile(SidecarPath(bank), []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok, err := ReadSidecar(bank); err == nil || ok || !strings.Contains(err.Error(), "unreadable: "+tc.want) {
+				t.Fatalf("ReadSidecar = (%v, %v), want a refusal for %s", ok, err, tc.want)
+			}
+		})
 	}
 }

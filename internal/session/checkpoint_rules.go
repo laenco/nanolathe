@@ -8,6 +8,7 @@ import (
 	"github.com/nanolathe-gg/nanolathe/internal/community"
 	"github.com/nanolathe-gg/nanolathe/internal/construction"
 	"github.com/nanolathe-gg/nanolathe/internal/economy"
+	"github.com/nanolathe-gg/nanolathe/internal/features"
 	"github.com/nanolathe-gg/nanolathe/internal/gameplay"
 	"github.com/nanolathe-gg/nanolathe/internal/movement"
 	"github.com/nanolathe-gg/nanolathe/internal/orders"
@@ -64,6 +65,14 @@ func (s *Session) validateCheckpointRuleBindings(c checkpointRuleContext) error 
 	}
 	if k, err := combat.CheckpointRulesKind(s.Rules.Combat); err != nil || k != ruleKind {
 		return checkpointRuleBindingError("session.Rules.Combat")
+	}
+	if k, err := features.CheckpointRulesKind(s.Rules.FeaturePool); err != nil || k != ruleKind {
+		return checkpointRuleBindingError("session.Rules.FeaturePool")
+	}
+	if s.Features != nil {
+		if k, err := features.CheckpointRulesKind(s.Features.Rules); err != nil || k != ruleKind {
+			return checkpointRuleBindingError("session.Features.Rules")
+		}
 	}
 	if k, err := economy.CheckpointRulesKind(s.Rules.Economy); s.Rules.Economy == nil || err != nil || k != ruleKind {
 		return checkpointRuleBindingError("session.Rules.Economy")

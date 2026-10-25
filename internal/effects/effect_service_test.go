@@ -7,6 +7,7 @@ import (
 
 	"github.com/nanolathe-gg/nanolathe/formats"
 	"github.com/nanolathe-gg/nanolathe/internal/content"
+	"github.com/nanolathe-gg/nanolathe/internal/frame"
 	"github.com/nanolathe-gg/nanolathe/vfs"
 )
 
@@ -131,5 +132,36 @@ func TestEffectServicePendingViewsCarryLiveness(t *testing.T) {
 	}
 	if views[1].ActiveA {
 		t.Fatal("a pending view with no authored timing published a live player")
+	}
+}
+
+// A producer that admits straight into the service, as COB explosions and
+// debris impacts do, is routed exactly as the event buffer routes one. Their
+// explosions used to keep the zero strip and so drew at barrier 0, beneath
+// the features and both unit passes, where every tree, metal patch, wreck
+// and grounded unit painted over them. No retail producer writes strip 0;
+// an unrouted producer belongs to the fixed pool, and an explicit strip is
+// kept [03 §1][03 R-STRIP-01 §3].
+func TestEffectServiceRoutesDirectAdmissions(t *testing.T) {
+	pool := &FixedEffectPool{}
+	s := NewEffectServiceWithPool(EffectCapacity, pool, effectTimingFixture(t))
+	explosion := Event{Kind: KindExplosion, Tick: 1, Sequence: 1, Graphic: "art", AssetID: "fx",
+		HasCalculatedFlash: true, CalculatedTable: 0, DurationsB: FlashFrameDurations(0)}
+	beam := explosion
+	beam.Sequence, beam.Strip = 2, int8(frame.StripBeam)
+	for _, e := range []Event{explosion, beam} {
+		if !s.Admit(1, e) {
+			t.Fatalf("admission refused %+v", e)
+		}
+	}
+	views := pool.SnapshotViews()
+	if len(views) != 2 {
+		t.Fatalf("admission published %d views", len(views))
+	}
+	if views[0].Strip != -1 {
+		t.Fatalf("a directly admitted explosion is on strip %d, want the fixed pool (-1)", views[0].Strip)
+	}
+	if views[1].Strip != int8(frame.StripBeam) {
+		t.Fatalf("an explicit strip became %d, want %d", views[1].Strip, frame.StripBeam)
 	}
 }

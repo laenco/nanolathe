@@ -368,6 +368,14 @@ footprint by the mover's own footprint, a builder that arrives is standing clear
 of the site it is about to stamp; `mustClearSite` keeps the walk installed until
 it is.
 
+Under the Builder speed mutator, a ground builder whose definition records the
+factor does not walk to the border once it is in reach: on the first approach
+visit where `[05 R-WORK-01 §2]`'s reach expression passes and its footprint is
+clear of the site, it releases the walk and places on the next visit, as after
+an arrival. This is a mode-independent mutator, not retail behaviour, and a
+definition without the factor keeps the walk above
+([DESIGN_MODS_MUTATORS "Builder speed"](DESIGN_MODS_MUTATORS.md#67-builder-speed--nanolathe-mutator-policy-user-authorized-2026-10-22)).
+
 Approach maintenance distinguishes a bound object from a retained object that
 another order displaced. A fresh approach installs its rectangle; maintenance
 cannot rebind the displaced one when its order becomes exposed again. Its
@@ -1165,6 +1173,58 @@ rewrites; already-issued ordinary moves remain in their queues. Tests lock the
 Strict bypass, feature-off answer, inclusive counter comparison, unconditional
 CRT cadence, protected-worker rule and fresh-build/tail branches.
 
+### Modern feature growth
+
+**Nanolathe Modern policy (user-authorized 2026-10-20).** Modern allocates
+live feature records on demand up to the map's plot-cell count. A feature
+anchor owns at most one record, so this is a structural bound rather than a
+second fixed gameplay cap. No slots are reserved up front and no older wrecks
+are evicted. Strict 3.1, Community 3.9 and an unbound service retain the
+2,048-slot shared arena and its existing refusal ordering
+`[05 R-FEAT-01 §2]` `[05 R-FEAT-01 §3]`.
+
+The trigger is any live-record allocation: 3D map/mission placement, wrecks,
+completed `isfeature` products, successor replacement, sprite ignition and
+sprite death/reclaim events, including save restoration. Resting sprites
+remain uncharged. Footprint admission, teardown-before-allocation, active-list
+order, dormancy, resource settlement and all existing event arithmetic stay
+with their existing owners. Capacity selection itself takes no RNG draws or
+resources; newly admitted features and events have their ordinary effects,
+including later fire draws, blocking and reclaim metal. Below the old limit,
+with identical admissions, both streams and resources remain unchanged.
+
+`features.Rules.ArenaLimit(cells)` owns the decision, composed as
+`session.RuleSet.FeaturePool`. A separate owning-package seam is necessary:
+construction's rules cannot own map population, fire or successor allocation,
+and the feature runtime cannot depend on construction. All reserved defaults,
+base completion, composition before terrain population, rebinding and restored
+services use the same registry and projection. Rules are stateless. An
+in-battle switch changes future admission only: switching to Strict keeps
+already existing Modern records and refuses additional slots while the live
+charge is at or above 2,048; switching back permits growth again. Rebinding
+neither deletes records nor consumes randomness or resources.
+
+Saves retain their existing count and record encodings; a Modern load must
+restore every record above 2,048 and allow further placement. Loading such an
+image under Strict/Community may fail existing placement admission and must
+not report a successful truncated load. Restore preflights the serialized
+3D plus animating record count before placement or ignition draws: a refused
+sprite-event restore would otherwise leave a resting sprite and report success.
+Valid retail images remain within the original bound. Save-sidecar mode selection stays
+unchanged. Multiplayer and replay use the agreed rule set, map and ordinary
+allocation order; no host memory estimate, local preference, wall clock or
+network message selects capacity. Checkpoint schema 5 includes the concrete
+feature policy tag; validation checks the exact charged count and valid map
+anchors, allowing overflow retained by a rule switch.
+
+Verification covers boundary admission in every mode, completed teeth over a
+full retail arena, terrain population and sprite events, replacement/reclaim,
+both RNG streams and resources, repeated rebinding and switching, expanded
+save/load/resave, checkpoint rejection of mismatched policies, and identical
+expanded-world digests under serial and parallel session execution. Wreck-heavy
+measurements cover settled lifecycle, publication, spatial lookup and churn,
+plus the displayless battle benchmark; record workload counts with timings.
+
 ### 3.4 Features — C25…C28
 
 **C25 — reproduction.** Phase six, after catalog rest cursors and before the
@@ -1339,8 +1399,9 @@ cleared on rebuild; the sorted order, live value mirrors and active-list
 lifecycle order are unchanged. This reduces allocation during feature churn
 without using obstacle revisions to skip any work.
 
-**Feature arena boundary (EC-G2).** The service enforces the researched live
-arena capacity and active-list order, but its Go records are fresh allocations,
+**Feature arena boundary (EC-G2).** Strict and Community enforce the researched
+live arena capacity; Modern uses the policy above. All modes retain active-list
+order, but the Go records are fresh allocations,
 not identities reused from a retained arena. A resting sprite also has a
 convenience lookup/publication record without consuming a live slot. These are
 implementation facts, not evidence that retail clears a freed slot.
@@ -1525,7 +1586,9 @@ placement: in both modes a product slot greys only when its installed name
 resolves to no definition [07 R-HUD-03 §6], and the world click issues the armed
 installed product with no CANBUILD test [07 §9]. Stock CORCS installs CORSY and
 CORLLT on page one while its CANBUILD omits both; they remain buildable, as in
-retail, and are still not added to AI candidates.
+retail, and neither list nor the Classic AI gains them. The Modern AI adds a
+builder's installed products to its own candidates
+([Modern AI page products](DESIGN_SESSIONS_AI_SAVE.md#modern-ai-page-products)).
 
 The decision itself allocates nothing and consumes no resources or RNG. AI
 selection retains authored duplicates and may consequently choose different

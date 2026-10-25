@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nanolathe-gg/nanolathe/internal/version"
@@ -23,9 +24,18 @@ func writeStartupSystemReport(w io.Writer) {
 	fmt.Fprintf(w, "nanolathe: system: os=%s arch=%s logical-cpus=%d gomaxprocs=%d go=%s\n",
 		runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.GOMAXPROCS(0), runtime.Version())
 	info, _ := debug.ReadBuildInfo()
-	revision, modified, engine := startupBuildIdentity(info)
-	// Source installers build an archive without VCS metadata and place the
-	// actual source revision beside the executable (tools/installer/README.md).
+	revision, modified, engine := buildRevision(info)
+	fmt.Fprintf(w, "nanolathe: build: profile=%s revision=%s modified=%s ebitengine=%s\n",
+		version.ProfileID(), revision, modified, engine)
+	fmt.Fprintf(w, "nanolathe: build manifest: %s\n", startupBuildManifest(version.CurrentBuildManifest()))
+}
+
+// buildRevision is the source revision a build records, its modified flag and
+// its Ebitengine version. Source installers build an archive without VCS
+// metadata and place the actual source revision beside the executable
+// (tools/installer/README.md).
+func buildRevision(info *debug.BuildInfo) (revision, modified, engine string) {
+	revision, modified, engine = startupBuildIdentity(info)
 	if revision == "unavailable" {
 		if exe, err := os.Executable(); err == nil {
 			if installed := startupInstalledRevision(filepath.Dir(exe)); installed != "" {
@@ -33,10 +43,23 @@ func writeStartupSystemReport(w io.Writer) {
 			}
 		}
 	}
-	fmt.Fprintf(w, "nanolathe: build: profile=%s revision=%s modified=%s ebitengine=%s\n",
-		version.ProfileID(), revision, modified, engine)
-	fmt.Fprintf(w, "nanolathe: build manifest: %s\n", startupBuildManifest(version.CurrentBuildManifest()))
+	return revision, modified, engine
 }
+
+// buildRevisionLabel is the short revision the Nanolathe screen shows beside
+// its wordmark, marked when the build's tree held uncommitted changes; a
+// build that records no revision is a development build.
+var buildRevisionLabel = sync.OnceValue(func() string {
+	info, _ := debug.ReadBuildInfo()
+	revision, modified, _ := buildRevision(info)
+	if len(revision) < 7 || revision == "unavailable" {
+		return "dev build"
+	}
+	if modified == "true" {
+		return revision[:7] + " modified"
+	}
+	return revision[:7]
+})
 
 // startupBuildManifest names the common build manifest the binary carries
 // (docs/DESIGN_MULTIPLAYER.md §8.7): its digest, which is the build players

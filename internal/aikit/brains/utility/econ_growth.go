@@ -15,11 +15,12 @@ import (
 // 33 between minutes 15 and 20, twice the factories for the income (people
 // build one per ~14 metal/s, the second around minute 8), and a tech-2
 // factory in a quarter of its games where 73% of winners have one by a
-// median minute 12. growth is a sum of parts, at full ambition only (the
-// lower personas' plans are their tier caps, style.go, and stay as they
-// are). The investments (claimable territory, the extractor need floor,
-// the constructor target, the factory cap) wait for growSafe: from minute
-// 8 (the opening and the first push are the brain's own), while our army
+// median minute 12. growth is a sum of parts, at full ambition and, after
+// the long-game fallback, at every ambition (the lower personas' plans are
+// their tier caps, style.go, before that). The investments (claimable
+// territory, the extractor need floor, the constructor target, the factory
+// cap) wait for growSafe: from minute 8 (the opening and the first push are
+// the brain's own), while our army
 // is at least the estimated enemy army and the base is not under
 // pressure; tech 2 has its own safety.
 //
@@ -83,12 +84,34 @@ const (
 // constructors part may spend.
 const surplusCov = 1100
 
-// growth reports whether the growth switch acts: at full ambition only.
+// growthFallbackMinute is when the lower personas start the growth shape
+// too. Easy and Medium are capped at 35% and 80% of the top tier and used
+// to stay there for a whole long game: a 2.4-hour 6-player replay's ally
+// held five extractors and no tier-2 factory while its store overflowed.
+// After this minute the same expansion/tech/factory parts act; the
+// ambition tier caps still scale their target counts.
+const growthFallbackMinute = 20
+
+// growth reports whether the growth switch acts: at full ambition, and for
+// every ambition after the long-game fallback. The fallback is a Nanolathe
+// Modern AI policy, not retail behaviour: a short game keeps the lower
+// persona's smaller plan.
 func (s *shared) growth() bool {
 	if s.p.Growth == 0 {
 		return false
 	}
-	return ambition(&s.k.Persona) >= 100
+	return ambition(&s.k.Persona) >= 100 || s.longGrowth()
+}
+
+// longGrowth reports whether the lower personas' long-game fallback is on:
+// after growthFallbackMinute, while the metal store is capLiftPercent full,
+// metal the lower plan is not spending. Growing on a store that is not
+// banking took that metal from the army in the middle game, where a team's
+// weakest seat was overrun. It is separate from growth so part() can tell
+// a configured growth bit from one added by the fallback.
+func (s *shared) longGrowth() bool {
+	return s.p.LongGrowth != 0 && ambition(&s.k.Persona) < 100 && s.tick >= growthFallbackMinute*1800 &&
+		s.mCap > 0 && s.mStock*100 >= s.mCap*capLiftPercent
 }
 
 // setupGrowth lists the factory definitions (setup).
@@ -111,7 +134,10 @@ func (s *shared) countDefs(defs []int32) int64 {
 // consTarget is how many constructors the economy wants (milli): the
 // human ratio per finished extractor (frames and walking builders would
 // feed back into the target), plus one builder per spots_per_con
-// claimable free spots, at most expandCons.
+// claimable free spots, at most expandCons. It acts at full ambition and,
+// after growthFallbackMinute, at every ambition (Nanolathe Modern AI
+// long-game policy; DESIGN_SESSIONS_AI_SAVE "Long games, low action
+// budgets and teams").
 func (s *shared) consTarget() int64 {
 	ratio := consPerMexLo + lin(int64(s.tick), 12*1800, 20*1800)*(consPerMexHi-consPerMexLo)/one
 	ratio = ratio * lin(int64(s.tick), growFrom*1800, 12*1800) / one
@@ -152,13 +178,20 @@ func (s *shared) mexTravelHalf() int64 {
 // income: one per facIncome of metal income, or two from minute 8. A
 // metal store capLiftPercent full while income covers expense lifts the
 // cap: the factories, helped by the builders, cannot spend what comes in.
-// A factory written off (its exit walled in) does not count.
+// A factory written off (its exit walled in) does not count. So do not
+// keep adding factories while several pads are stalled: every copy would
+// add to the blockage instead of output. This is the spawn-success cap,
+// separate from the income cap above.
 func (s *shared) factoryFull() bool {
 	if !s.part(gFactories) || !s.growSafe() || (s.mCap > 0 && s.mStock*100 >= s.mCap*capLiftPercent && s.mInc >= s.mExp) {
 		return false
 	}
+	n := s.countDefs(s.facDefs) - int64(s.deadFacs)
+	if n > 0 && s.blockedFacs >= 2 && int64(s.blockedFacs)*2 >= n {
+		return true
+	}
 	allowed := max64(1000+lin(int64(s.tick), secondFacAt*30-900, secondFacAt*30)*1000/one, s.mInc*1000/facIncome)
-	return (s.countDefs(s.facDefs)-int64(s.deadFacs))*1000 >= allowed
+	return n*1000 >= allowed
 }
 
 // mexNeed is the metal need an extractor site is scored with: with growth
@@ -224,5 +257,15 @@ func (s *shared) part(bit int32) bool {
 	if bit == gConsFloor {
 		return s.p.Growth&bit != 0
 	}
-	return s.growth() && s.p.Growth&bit != 0
+	if !s.growth() {
+		return false
+	}
+	if s.p.Growth&bit != 0 {
+		return true
+	}
+	// The shipped Growth value is the constructor floor (16), which acts at
+	// every ambition. Without this fallback the default lower personas
+	// would still never expand or tech after an hour; long_growth=0 keeps
+	// the explicitly configured bits only.
+	return s.longGrowth() && bit&(gExpand|gTech|gConstructors|gFactories) != 0
 }

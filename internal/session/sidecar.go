@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"github.com/nanolathe-gg/nanolathe/internal/community"
+	"github.com/nanolathe-gg/nanolathe/internal/mission"
 	"github.com/nanolathe-gg/nanolathe/internal/save"
 	"github.com/nanolathe-gg/nanolathe/internal/version"
 )
@@ -41,9 +42,15 @@ func SaveSidecar(s *Session) save.Sidecar {
 	if !s.Restrictions.IsZero() {
 		out.Restrictions = s.Restrictions.Map()
 	}
+	out.AlliedSight = s.Skirmish.AlliedSight && s.Mission != nil && s.Mission.Type == mission.TypeSkirmish && seatRulesOf(s.Rules).AlliedSightChoice()
 	if rec := RecordAIControllers(s); rec != nil {
 		if data, err := json.Marshal(rec); err == nil {
 			out.AI = data
+		}
+	}
+	if rec := RecordSurvival(s); rec != nil {
+		if data, err := json.Marshal(rec); err == nil {
+			out.Survival = data
 		}
 	}
 	if s.Catalog != nil {

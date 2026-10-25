@@ -13,10 +13,12 @@ import (
 // and names the human's player record. These are Nanolathe lobby and
 // protocol values, not retail data.
 
-// Unnamed rooms build the configurations released clients build, so the two
-// agree at Ready: the digests are configuration version 2's (§8.6), whose
-// rooms of no named content encode as the version-1 rooms recorded before
-// seats had names or rooms had rule sets, plus field 16's empty count.
+// Unnamed rooms encode as configuration version 2's (§8.6) rooms of no named
+// content: the version-1 rooms recorded before seats had names or rooms had
+// rule sets, plus field 16's empty count. Field 9 carries the base content
+// caps, so these digests moved when the caps were raised to 128 MiB and
+// 8 MiB (docs/DESIGN_CONTENT_VFS.md §5 "Content profiles"); a client built
+// before that change disagrees at Ready.
 func TestOnlineUnnamedRoomsAreLocked(t *testing.T) {
 	survivalRoom := onlineTestSetup(true, 0, 0)
 	survivalRoom.Computers = []OnlineComputer{{Side: 1, Color: 4, Kind: ai.ControllerModern, Difficulty: 1}}
@@ -25,9 +27,9 @@ func TestOnlineUnnamedRoomsAreLocked(t *testing.T) {
 		setup OnlineMatchSetup
 		want  string
 	}{
-		{"two teams", onlineTestSetup(false, 1, 2), "1a6072ee81ae7c6a76afe73eda1242c704aeee4ff9678e2fd118e77d75ebba40"},
-		{"two humans and two computers", onlineComputerTestSetup(false), "13585ad18d5009766d87c29c6ded12bfef45fb8243763b62d8718abbd30200ff"},
-		{"Survival with a computer survivor", survivalRoom, "61a1b2dcb9ddeb09121f891fb1a6fd867daca80e8455c76693e2d8710417e6a8"},
+		{"two teams", onlineTestSetup(false, 1, 2), "96a21b864ed2cb514b42917d358688a1bfa9b8d67943a732db04a54f71a3bcf8"},
+		{"two humans and two computers", onlineComputerTestSetup(false), "ff76c0f47f9a7db34364e563479ee9ccd73576183304ad88e8a0465c1899704b"},
+		{"Survival with a computer survivor", survivalRoom, "bbf3b73db6faef1bb1f81c0b34ed35ade257861419968340ee4944ec7a8f0a27"},
 	} {
 		digest := resolveMatch(t, onlineTestRequest(t, tc.setup)).Digest()
 		if got := hex.EncodeToString(digest[:]); got != tc.want {

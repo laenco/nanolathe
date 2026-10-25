@@ -188,23 +188,19 @@ func (h *retailBattleHUD) drawCommunityWeather(c *client.Client, b *battleSessio
 	if !ok {
 		tide = h.texts.tide.store("", [4]int64{int64(tidal)}, fmt.Sprintf("Tidal : +%d", tidal))
 	}
-	clock := h.texts.weatherClock.clock("Game Time", f.Tick)
-	clockWidth := client.MeasureText(h.console, clock)
-	clockX := x + max(117, client.MeasureText(h.console, wind)+8)
-	if clockX+clockWidth > width-4 {
+	reportWidth := max(client.MeasureText(h.console, wind), client.MeasureText(h.console, tide))
+	if x+reportWidth > width-4 {
 		// Compact displays have no spare resource-strip space. Keep this
 		// optional host overlay below the strip, beside the side rail, rather
 		// than clamping it over the energy readout (interface design §3.14).
 		x, y1 = 132, 36
 		y2 = y1 + int(h.console.Height) + 4
-		clockX = x + max(client.MeasureText(h.console, wind), client.MeasureText(h.console, tide)) + 8
-		c.UIFillRect(x-4, y1-2, clockX+clockWidth-x+8, y2-y1+int(h.console.Height)+4, h.guiColor(0))
+		c.UIFillRect(x-4, y1-2, reportWidth+8, y2-y1+int(h.console.Height)+4, h.guiColor(0))
 	}
 	y1 = max(0, min(y1, height-int(h.console.Height)))
 	y2 = max(0, min(y2, height-int(h.console.Height)))
 	c.UIText(h.console, wind, x, y1, h.guiColor(10))
 	c.UIText(h.console, tide, x, y2, h.guiColor(10))
-	c.UIText(h.console, clock, max(0, clockX), (y1+y2)/2, h.guiColor(7))
 }
 
 // +bps retains the retail transport display in the strategic view as well.

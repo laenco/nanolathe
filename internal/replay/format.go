@@ -39,8 +39,8 @@ import (
 // Magic opens every replay file.
 const Magic = "NLREPLAY"
 
-// FormatVersion is the replay format this build writes and reads. Version
-// 2 added the header's official add-ons; this build does not read version 1.
+// FormatVersion is the replay format this build writes. Readers also accept
+// version 1, which ended the header at Started and had no official add-ons.
 const FormatVersion uint16 = 2
 
 // Bounds of format version 2. They are admission limits a reader checks
@@ -85,6 +85,9 @@ var (
 	// ErrUnsupportedVersion: the file is a replay in a format version this
 	// build does not read.
 	ErrUnsupportedVersion = errors.New("nanolathe: replay format version not supported")
+	// ErrUnsupportedFeature: a required header extension is unknown to this
+	// build, so it cannot read or write the replay exactly.
+	ErrUnsupportedFeature = errors.New("nanolathe: replay header feature not supported")
 	// ErrCorrupt: the bytes are not a replay, or a whole part of one is
 	// malformed.
 	ErrCorrupt = errors.New("nanolathe: replay file is damaged")
@@ -235,6 +238,21 @@ type Header struct {
 	// playback mounts them again. An online battle's configuration names
 	// its own content (field 16), and its header lists none.
 	Addons []Addon
+	// Extensions are optional metadata or explicitly required features, in
+	// strictly ascending nonzero ID order (DESIGN_MULTIPLAYER §10).
+	Extensions []HeaderExtension
+	// fileVersion is set only when reading version 1. Its zero value keeps
+	// new headers and version-2 round trips identical.
+	fileVersion uint16
+}
+
+// FileVersion is the decoded file's format version, or the current version
+// for a newly constructed Header.
+func (h Header) FileVersion() uint16 {
+	if h.fileVersion == 1 {
+		return 1
+	}
+	return FormatVersion
 }
 
 // Addon is one official add-on a recorded battle mounted: its id, version,
@@ -258,16 +276,21 @@ func (h Header) clone() Header {
 	h.Config = append([]byte(nil), h.Config...)
 	h.Seats = append([]Seat(nil), h.Seats...)
 	h.Addons = append([]Addon(nil), h.Addons...)
+	h.Extensions = append([]HeaderExtension(nil), h.Extensions...)
+	for i := range h.Extensions {
+		h.Extensions[i].Data = append([]byte(nil), h.Extensions[i].Data...)
+	}
 	return h
 }
 
-// encodeHeader validates h and writes it in the version-1 header layout:
+// encodeHeader validates h and writes the frozen header prefix:
 // kind u8; configuration size u32 and bytes; the identity — protocol u16,
 // build, content and map digests, rule set name key, rule base u8,
 // Community digest, mod id text(255), mod version text(255), mod archive
 // digest, configuration digest; the initial checksum digest; local seat u8;
 // map name text(1024); seat count u32 (at most 10) and per seat its name
-// text(16), side text(255), colour u8 and role u8; started s64.
+// text(16), side text(255), colour u8 and role u8; started s64. Version 2
+// appends add-ons followed by the extension area (DESIGN_MULTIPLAYER §10).
 func encodeHeader(h Header) ([]byte, error) {
 	if err := validateHeader(h); err != nil {
 		return nil, err
@@ -305,6 +328,9 @@ func encodeHeader(h Header) ([]byte, error) {
 		w.Text(a.Version)
 		w.U64(a.Size)
 		w.Digest(a.Digest)
+	}
+	if err := writeHeaderExtensions(&w, h.Extensions); err != nil {
+		return nil, err
 	}
 	if w.Len() > MaxHeaderBytes {
 		return nil, formatError("header", fmt.Sprintf("at most %d bytes", MaxHeaderBytes))
@@ -378,12 +404,22 @@ func validateHeader(h Header) error {
 			return formatError(path, "add-ons with an id and version, in strictly ascending id order")
 		}
 	}
-	return nil
+	return validateHeaderExtensions(h.Extensions)
 }
 
 // decodeHeader reads a version-2 header, refusing every bound before it
-// allocates and any byte after the last field.
+// allocates and allowing an absent extension area in original version-2
+// recordings.
 func decodeHeader(b []byte) (Header, error) {
+	return decodeHeaderVersion(b, FormatVersion)
+}
+
+// decodeHeaderVersion reads the frozen prefix shared by both versions and
+// only the tail that the file's version permits (DESIGN_MULTIPLAYER §10).
+func decodeHeaderVersion(b []byte, version uint16) (Header, error) {
+	if len(b) > MaxHeaderBytes {
+		return Header{}, formatError("header", fmt.Sprintf("at most %d bytes", MaxHeaderBytes))
+	}
 	r := netproto.NewReader(b, func(path, expected string) error { return formatError("header "+path, expected) })
 	var h Header
 	h.Kind = Kind(r.U8())
@@ -432,6 +468,13 @@ func decodeHeader(b []byte) (Header, error) {
 		}
 	}
 	h.Started = r.S64()
+	if version == 1 {
+		if err := r.End(); err != nil {
+			return Header{}, err
+		}
+		h.fileVersion = 1
+		return h, nil
+	}
 	// An add-on row is at least 35 bytes: two empty texts, a size and a
 	// digest.
 	if count := r.Count(MaxAddons, 35); count > 0 {
@@ -446,6 +489,9 @@ func decodeHeader(b []byte) (Header, error) {
 		if r.Err() == nil && (a.ID == "" || a.Version == "" || i > 0 && h.Addons[i-1].ID >= a.ID) {
 			r.Fail("add-ons with an id and version, in strictly ascending id order")
 		}
+	}
+	if r.Err() == nil && r.Offset() < len(b) {
+		h.Extensions = readHeaderExtensions(r, len(b))
 	}
 	if err := r.End(); err != nil {
 		return Header{}, err

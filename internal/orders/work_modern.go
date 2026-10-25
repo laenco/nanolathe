@@ -7,7 +7,6 @@ package orders
 import (
 	"math/bits"
 
-	"github.com/nanolathe-gg/nanolathe/internal/pool"
 	"github.com/nanolathe-gg/nanolathe/internal/sim/numeric"
 	"github.com/nanolathe-gg/nanolathe/internal/units"
 )
@@ -34,107 +33,6 @@ func (r *ModernRules) PatrolWork(req PatrolWorkRequest) PatrolWorkOption {
 		return option
 	}
 	return PatrolBoth
-}
-
-// The caller has installed the original patrol leg and its maintenance gate.
-// A hold reloads the new work head without code 3's selection-time RNG draw.
-// The executor still makes its ordinary approach and work draws [I4].
-func (r *ModernRules) PatrolWorkVisit(u *units.Unit, n *Node, tick uint32) (Code, bool) {
-	if u == nil || u.Def == nil || n == nil || !u.Def.Builder || !hasMover(u) || !modernWorkPatrol(n) {
-		return 0, false
-	}
-	b := bindingFor(u)
-	q := QueueOfUnit(u)
-	if b == nil || q == nil || q.patrolWorkPaused {
-		return 2, true
-	}
-	option := r.PatrolWork(PatrolWorkRequest{Builder: u})
-	resources, hasResources := playerResources(u)
-	if option != PatrolReclaimOnly && hasResources && patrolResourceAtLeastTwenty(resources.Stock[1], resources.Capacity[1]) && r.AllowAutomaticRepair(u, tick) {
-		var best *units.Unit
-		var bestID ID
-		var bestDistance modernWide
-		b.ForEachUnit(func(h pool.Handle, target *units.Unit) bool {
-			if target == nil || !target.Alive || !repairCandidate(b, u, h, target) || !modernPatrolCandidate(u, target.X, target.Z) {
-				return scanNext
-			}
-			id := Resolve(8, u, target, nil)
-			if id == 0 {
-				return scanNext
-			}
-			distance := modernDistanceSquared(u.X, u.Z, target.X, target.Z)
-			unfinished, bestUnfinished := target.Remaining != 0, best != nil && best.Remaining != 0
-			if best == nil || unfinished && !bestUnfinished || unfinished == bestUnfinished && (distance.less(bestDistance) || distance == bestDistance && h < best.Handle) {
-				best, bestID, bestDistance = target, id, distance
-			}
-			return scanNext
-		})
-		if best != nil {
-			work := NewNodeForOrder(bestID, best.Handle, best.X, best.Y, best.Z, tick, u.Handle, false)
-			modernBorrowWork(u, n, work)
-			return 2, true
-		}
-	}
-	if option == PatrolAssistOnly || !hasResources || !u.Def.CanReclamate {
-		return 2, true
-	}
-	best, found := modernPatrolFeature(b, u, resources, true)
-	if b.World != nil && b.World.verifyFeatureScan {
-		if full, fullFound := modernPatrolFeature(b, u, resources, false); full != best || fullFound != found {
-			panic("orders: the restricted patrol feature scan chose differently from the full scan")
-		}
-	}
-	if found {
-		id := Lookup("Reclaim")
-		if u.Def.CanFly {
-			id = Lookup("VTOL_Reclaim")
-		}
-		modernBorrowWork(u, n, NewNodeForOrder(id, 0, best.X, best.Y, best.Z, tick, u.Handle, false))
-	}
-	return 2, true
-}
-
-// modernPatrolFeature is the patrol's reclaim pick: the nearest candidate
-// feature, ties broken by modernFeatureBefore. That is a strict total order —
-// no two features share an anchor — so the pick is the same in any visiting
-// order. near restricts the traversal to the square around the patrol
-// radius, which holds every feature modernPatrolCandidate admits, so the
-// restricted and full scans see the same candidates.
-func modernPatrolFeature(b *QueueBinding, u *units.Unit, resources ResourceView, near bool) (FeatureView, bool) {
-	var best FeatureView
-	var bestDistance modernWide
-	found := false
-	visit := func(feature FeatureView) bool {
-		if !feature.Reclaimable || !feature.Autoreclaimable || !modernPatrolCandidate(u, feature.X, feature.Z) || !modernFeatureNeeded(feature, resources) {
-			return scanNext
-		}
-		distance := modernDistanceSquared(u.X, u.Z, feature.X, feature.Z)
-		if !found || distance.less(bestDistance) || distance == bestDistance && modernFeatureBefore(feature, best) {
-			best, bestDistance, found = feature, distance, true
-		}
-		return scanNext
-	}
-	if near {
-		b.ForEachFeatureNear(u.X, u.Z, u.Def.SightDistance, visit)
-	} else {
-		b.ForEachFeature(visit)
-	}
-	return best, found
-}
-
-func modernFeatureNeeded(feature FeatureView, resources ResourceView) bool {
-	return feature.Metal > 0 && resources.Stock[0] < resources.Capacity[0] ||
-		feature.Energy > 0 && resources.Stock[1] < resources.Capacity[1]
-}
-
-func modernFeatureBefore(a, b FeatureView) bool {
-	if a.CZ != b.CZ {
-		return a.CZ < b.CZ
-	}
-	if a.CX != b.CX {
-		return a.CX < b.CX
-	}
-	return a.ID < b.ID
 }
 
 func modernBorrowWork(u *units.Unit, assignment *Node, work Node) {
@@ -185,8 +83,14 @@ func (*ModernRules) AutomaticWorkValid(u *units.Unit, n *Node) bool {
 		x, z = target.X, target.Z
 	}
 	if modernWorkPatrol(assignment) {
-		return u != nil && u.Def != nil && n.workReturn != nil &&
-			q.indexOfPrimary(n.workReturn) >= 0 && modernWithinPoint(n.workReturn.GoalX, n.workReturn.GoalZ, x, z, u.Def.SightDistance)
+		// The target must stay within or on the sight circle around the saved
+		// acquisition point, and the builder within or on twice that radius
+		// of it: a pursuit or a route detour beyond either abandons the job as
+		// a failure (DESIGN_UNITS_ORDERS_COB "Smarter patrol — 2026-10-22").
+		back := n.workReturn
+		return u != nil && u.Def != nil && back != nil && q.indexOfPrimary(back) >= 0 &&
+			modernWithinPoint(back.GoalX, back.GoalZ, x, z, u.Def.SightDistance) &&
+			modernWithinPoint(back.GoalX, back.GoalZ, u.X, u.Z, modernPatrolReach(u.Def.SightDistance))
 	}
 	ward := getLookupForWard(assignment, u)
 	return ward != nil && ward.Alive && modernWithinPoint(ward.X, ward.Z, x, z, modernWorkRadius)

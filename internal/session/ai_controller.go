@@ -196,6 +196,18 @@ func applyAIControllers(s *Session, cfg SkirmishConfig) error {
 	return nil
 }
 
+// hasModernComputer reports whether a computer row of cfg chose the Modern
+// AI, applyAIControllers' test: the frozen inputs then carry what only that
+// controller reads (content.SimulationInputRequest.ModernAI).
+func hasModernComputer(cfg SkirmishConfig) bool {
+	for i := 0; i < cfg.NumPlayers && i < len(cfg.Players); i++ {
+		if row := cfg.Players[i]; row.IsComputer() && row.AI == ai.ControllerModern {
+			return true
+		}
+	}
+	return false
+}
+
 // ModernAIPlayer reports whether owner is a computer player the Modern AI
 // controller decides for: a live computer slot (control byte 2) whose
 // manager is not the Survival attacker's and whose bound step runs the Modern

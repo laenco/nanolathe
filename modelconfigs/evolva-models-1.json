@@ -1,0 +1,36 @@
+{
+  "id": "evolva-models",
+  "name": "Evolva models",
+  "version": "1",
+  "summary": "Detailed replacement models for 97 units and 85 wrecks, using UH40 with gaps filled from the 2004, 2003 and 2002 releases.",
+  "homepage": "http://www.planetannihilation.com/taan/pages/evolva_systeme/taan_evolva.htm",
+  "archive": "EvolvaModels.ufo",
+  "readme": [
+    "Evolva models by Sinclaire / TA Arsenal Network (TAAN); original project idea credited to Sinclaire and M3g.",
+    "This is a Nanolathe compilation of maintainer-supplied Evolva source ZIPs. It takes each model from the first source that supplies its case-insensitive filename, using the remaining sources only to fill gaps. Every retained 3DO is copied byte for byte; logical filenames are normalized to lowercase.",
+    "The archive supplies only replacement objects3d/*.3do models. Nanolathe uses the scripts supplied by the selected game content; this compilation contains no scripts, textures, unit definitions or gameplay configuration. It does not claim to reproduce an exact original UH40 release or its release requirements.",
+    "Original project page preserved at https://web.archive.org/web/20040325023326id_/http://www.planetannihilation.com:80/taan/pages/evolva_systeme/taan_evolva.htm . Preservation catalogues distinguish Evolva models (https://files.tauniverse.com/files/ta/other/evolva-models/) from Evolva Uberhack models (https://files.tauniverse.com/files/ta/other/evolva-uberhack-models/). The exact download locations of the maintainer-supplied ZIPs are not recorded; the pinned sizes and hashes below identify the source bytes."
+  ],
+  "sources": [
+    {
+      "file": "Evolva_UH40_v1.zip",
+      "size": 596623,
+      "sha256": "53db9f4a33725f841484f7b705e4ced14b4937a34328fa60a27b498491615e0a"
+    },
+    {
+      "file": "evolva-2004.zip",
+      "size": 100499,
+      "sha256": "39821c62645acd42510a1d9cf362502692a336b79c3ffd02a7cd28f060f8cc7f"
+    },
+    {
+      "file": "evolva-2003.zip",
+      "size": 470843,
+      "sha256": "db0b5b6ddd28d250a822849de6f6dd32da2fa8c7889a7547912f8aeaaeb436d2"
+    },
+    {
+      "file": "evolva-2002.zip",
+      "size": 496507,
+      "sha256": "76ea28b41750601f784c8ff104044c4fa61de04146623ba1b69410b45ca6e6d2"
+    }
+  ]
+}

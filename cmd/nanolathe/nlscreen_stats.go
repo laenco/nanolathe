@@ -93,6 +93,13 @@ var nlMutatorStats = map[string]nlStat{
 		value: func(_ *content.Catalog, u *content.UnitDef) (float64, bool) {
 			return float64(u.MaxVelocity) / 65536, u.MaxVelocity > 0
 		}, format: func(v float64) string { return strconv.FormatFloat(v, 'f', 2, 64) }},
+	"builderSpeed": {label: "Turn rate", units: []string{"armck", "armcv", "armcom", "corck", "corcv"},
+		value: func(_ *content.Catalog, u *content.UnitDef) (float64, bool) {
+			// A mobile builder's turn rate is the agility the plate can show;
+			// its build-animation timing has no definition field
+			// (DESIGN_MODS_MUTATORS "Builder speed").
+			return float64(uint16(u.TurnRate)), u.Builder && u.BMCode == 1 && uint16(u.TurnRate) > 0
+		}, format: formatInt},
 	"sight": {label: "Sight", units: []string{"armpw", "armbull", "armpeep", "corak", "corfink"},
 		value: func(_ *content.Catalog, u *content.UnitDef) (float64, bool) {
 			return float64(u.SightDistance), u.SightDistance > 0
@@ -249,7 +256,8 @@ func (s *nlScreen) heroMutatorStats(screen *ebiten.Image, key string, x, y, a fl
 		st := screenkit.Style{Size: 12 * u, Top: alphaC(nlBody, a), Shadow: 0.1}
 		bf.Draw(screen, label, row.X+48*u, row.Y+25*u, st)
 		st.Top, st.Size = alphaC(nlDim, a), 11*u
-		bf.Draw(screen, stat.label, row.X+230*u, row.Y+25*u, st)
+		// The stat's name ends before its values in any language.
+		bf.Draw(screen, stat.label, row.X+230*u, row.Y+25*u, fitStyle(bf, stat.label, st, 124*u, 8*u))
 		vx := row.X + 360*u
 		st.Top, st.Size = alphaC(nlDim, a), 12*u
 		vx += bf.Draw(screen, stat.format(before), vx, row.Y+25*u, st) + 10*u

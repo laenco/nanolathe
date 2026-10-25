@@ -127,6 +127,13 @@ type Board struct {
 	// Spots.
 	Spots []SpotState
 
+	// Breach is the army's request for a builder to reclaim the wall
+	// pieces around (BreachX, BreachZ) that hold one of its squads, made at
+	// think BreachTick (0: never). The army sets it on every think the
+	// squad stays held there; the economy answers it (utility econ_breach.go).
+	BreachX, BreachZ int32
+	BreachTick       uint32
+
 	Posture Posture
 
 	// Persistent state.

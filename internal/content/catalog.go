@@ -381,6 +381,7 @@ func CompileWithOptions(fs vfs.FSOps, opts Options) (*Catalog, error) {
 		return nil, err
 	}
 	warnings = append(warnings, applyDownloadRecordMenus(records, units, buildMenus, downloadPlacements)...)
+	fillInstalledProducts(fs, units, buildMenus, downloadPlacements)
 	warnings = append(warnings, fillUnitRecordScripts(fs, records)...)
 	report.Report(FamilyModels, 100)
 
@@ -974,6 +975,7 @@ func (c *Catalog) Clone() *Catalog {
 				cp.Buttons = append([]string(nil), v.Buttons...)
 			}
 			cp.AuthoredButtons = slices.Clone(v.AuthoredButtons)
+			cp.InstalledProducts = slices.Clone(v.InstalledProducts)
 			out.BuildMenus[k] = &cp
 		}
 	}

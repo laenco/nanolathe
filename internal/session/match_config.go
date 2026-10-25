@@ -120,6 +120,13 @@ type MatchSeat struct {
 	// All, difficulty and seat layers already merged, in ascending key order.
 	// Every other role carries none.
 	AIParams []AIParam
+
+	// Start is the row's chosen start point, required extension 17: unset
+	// leaves it to Location; set, X and Z are world pixels below
+	// StartPointLimit. Only a human or computer row of a skirmish chooses
+	// one, under a rule set that honours it (docs/DESIGN_SESSIONS_AI_SAVE.md
+	// "Modern chosen start positions").
+	Start StartPoint
 }
 
 // MatchMod is field 8: the selected mod's public identity. Base content is
@@ -252,6 +259,8 @@ type MatchConfigRequest struct {
 
 	Community community.Features // 10
 
+	// Mutators is field 11, except Builder speed, which has its own step
+	// list and travels as required extension 19 (match_config_setup_extensions.go).
 	Mutators content.Mutators // 11
 
 	UnitRestrictions []MatchUnitRestriction // 12
@@ -269,6 +278,50 @@ type MatchConfigRequest struct {
 	// battle composes from the seat's own mounted content, as a
 	// single-player recording or a command-line play test does.
 	RoomContent []MatchContentEntry // 16
+
+	// Extensions holds opaque records in the version-2 tail after fields 1–16
+	// (docs/DESIGN_MULTIPLAYER.md §8.6), in ascending ID order. Resolution
+	// projects recognized records into Start/AlliedSight and removes them
+	// from this slice; encoding reconstructs them from those typed fields.
+	Extensions []MatchConfigExtension
+
+	// AlliedSight is the typed value of required extension 18.
+	AlliedSight MatchAlliedSight
+
+	// GeneratedMap is the typed value of required extension 20: the recipe
+	// of the generated map the battle is played on, as the host wrote it
+	// (docs/DESIGN_MAP_GENERATOR.md §10); empty for any other map. It
+	// changes nothing a tick computes, since the map's own bytes are the
+	// content identity's, but a build that cannot make the map again from it
+	// refuses the configuration rather than play another map of that name.
+	GeneratedMap []byte
+}
+
+// MatchAlliedSight is required extension 18: whether a skirmish's teams share sight and
+// radar (docs/DESIGN_SESSIONS_AI_SAVE.md "Modern allied sight",
+// DESIGN_MULTIPLAYER §6.7 "Allied sight"). Its zero value is version 1's
+// rule, which differs by how the battle is played, so every configuration
+// version 1 describes keeps its meaning: an online skirmish's teams share
+// and a single-player battle's do not. The adapters write zero for that rule
+// and an explicit value only for the other choice.
+type MatchAlliedSight uint8
+
+const (
+	MatchAlliedSightVersion1 MatchAlliedSight = 0
+	MatchAlliedSightSeparate MatchAlliedSight = 1
+	MatchAlliedSightShared   MatchAlliedSight = 2
+)
+
+// Shared reports whether teams share sight in a battle played online or
+// single-player.
+func (a MatchAlliedSight) Shared(online bool) bool {
+	switch a {
+	case MatchAlliedSightSeparate:
+		return false
+	case MatchAlliedSightShared:
+		return true
+	}
+	return online
 }
 
 // EffectiveMatchConfig is a resolved, validated and frozen configuration.
@@ -278,6 +331,9 @@ type MatchConfigRequest struct {
 type EffectiveMatchConfig struct {
 	request  MatchConfigRequest
 	encoding []byte
+	// version is 1 only for a historical replay configuration. Zero and 2
+	// use the current encoding and identity domain.
+	version uint16
 }
 
 // Protocol limits of configuration version 2 (§8.6). They are admission
@@ -375,7 +431,17 @@ func matchComputersPerHost(set RuleSet) int {
 // mutator factors spell the identity as 1/1 resolves to the same value as one
 // that leaves them zero; every other field is taken as written.
 func ResolveMatchConfig(r MatchConfigRequest) (EffectiveMatchConfig, error) {
+	return resolveMatchConfig(r, 2)
+}
+
+func resolveMatchConfig(r MatchConfigRequest, version uint16) (EffectiveMatchConfig, error) {
 	c := r.clone()
+	if err := c.consumeSetupExtensions(); err != nil {
+		return EffectiveMatchConfig{}, err
+	}
+	if version == 1 && (c.hasChosenStarts() || c.AlliedSight != MatchAlliedSightVersion1 || !c.Mutators.BuilderSpeed.IsIdentity() || len(c.GeneratedMap) != 0) {
+		return EffectiveMatchConfig{}, matchFieldError("configuration.version", "version 2 for chosen starts, allied sight, Builder speed or a generated map")
+	}
 	if _, err := c.validate(); err != nil {
 		return EffectiveMatchConfig{}, err
 	}
@@ -386,6 +452,9 @@ func ResolveMatchConfig(r MatchConfigRequest) (EffectiveMatchConfig, error) {
 		if f.IsIdentity() {
 			*f = content.Factor{}
 		}
+	}
+	if c.Mutators.BuilderSpeed.IsIdentity() {
+		c.Mutators.BuilderSpeed = content.Factor{}
 	}
 	for i := range c.Seats {
 		if len(c.Seats[i].AIParams) == 0 {
@@ -401,18 +470,19 @@ func ResolveMatchConfig(r MatchConfigRequest) (EffectiveMatchConfig, error) {
 	if len(c.RoomContent) == 0 {
 		c.RoomContent = nil
 	}
-	encoding, err := encodeMatchRequest(&c)
+	encoding, err := encodeMatchRequest(&c, version)
 	if err != nil {
 		return EffectiveMatchConfig{}, err
 	}
 	if len(encoding) > matchConfigMaxBytes {
 		return EffectiveMatchConfig{}, matchFieldError("configuration", fmt.Sprintf("an encoding of at most %d bytes, got %d", matchConfigMaxBytes, len(encoding)))
 	}
-	return EffectiveMatchConfig{request: c, encoding: encoding}, nil
+	return EffectiveMatchConfig{request: c, encoding: encoding, version: version}, nil
 }
 
-// Request returns a deep copy of the resolved value. Resolving it again
-// yields an equal configuration.
+// Request returns a deep copy of the resolved value. ResolveMatchConfig
+// resolves that value under the current version; a legacy replay retains its
+// original identity only in the EffectiveMatchConfig returned by decoding.
 func (c EffectiveMatchConfig) Request() MatchConfigRequest { return c.request.clone() }
 
 // clone deep-copies every slice the request holds.
@@ -436,12 +506,16 @@ func (r MatchConfigRequest) clone() MatchConfigRequest {
 	if r.RoomContent != nil {
 		out.RoomContent = append([]MatchContentEntry{}, r.RoomContent...)
 	}
+	out.Extensions = cloneMatchExtensions(r.Extensions)
+	if r.GeneratedMap != nil {
+		out.GeneratedMap = append([]byte(nil), r.GeneratedMap...)
+	}
 	return out
 }
 
 // matchFieldError is the one diagnostic shape of a rejected configuration.
 func matchFieldError(path, expected string) error {
-	return fmt.Errorf("nanolathe: match configuration rejected: logical path %s, providers searched [match configuration v1], expected %s", path, expected)
+	return fmt.Errorf("nanolathe: match configuration rejected: logical path %s, providers searched [match configuration], expected %s", path, expected)
 }
 
 // validate checks every field of §8.6 and returns the rule set the
@@ -514,11 +588,14 @@ func (r *MatchConfigRequest) validate() (RuleSet, error) {
 	if _, err := matchCommunityJSON(set, r.Community); err != nil {
 		return RuleSet{}, err
 	}
-	// 11. Mutators.
+	// 11. Mutators, and Builder speed on its own list (extension 19).
 	for i, f := range matchMutatorFields(&r.Mutators) {
 		if _, ok := matchMutatorIndex(*f); !ok {
 			return RuleSet{}, matchFieldError(fmt.Sprintf("mutators[%d]", i), "the identity or a factor on the mutator step list")
 		}
+	}
+	if _, ok := content.BuilderSpeedStepIndex(r.Mutators.BuilderSpeed); !ok {
+		return RuleSet{}, matchFieldError("mutators.builderSpeed", "the identity or a factor on the Builder speed step list")
 	}
 	// 12. Unit restrictions.
 	if err := r.validateRestrictions(); err != nil {
@@ -541,8 +618,25 @@ func (r *MatchConfigRequest) validate() (RuleSet, error) {
 	if p.Revision != MatchPolicyRevision || p.Scheduling != MatchPolicyScheduling || p.Pacing != MatchPolicyPacing || p.Drop != MatchPolicyDrop || p.Audience != MatchPolicyAudience {
 		return RuleSet{}, matchFieldError("policies", "revision 1 with scheduling, pacing, drop and audience policy 1")
 	}
+	// Chosen starts are checked with the seats. Allied sight: Survival's survivors
+	// always share (DESIGN_SURVIVAL §4.3), so only a skirmish chooses.
+	if r.AlliedSight > MatchAlliedSightShared {
+		return RuleSet{}, matchFieldError("alliedSight", "0 version 1's rule, 1 separate or 2 shared")
+	}
+	if r.SessionKind != MatchOnlineSkirmish && r.AlliedSight != MatchAlliedSightVersion1 {
+		return RuleSet{}, matchFieldError("alliedSight", "0 for Survival, whose survivors always share")
+	}
+	if r.AlliedSight != MatchAlliedSightVersion1 && !seatRulesOf(set).AlliedSightChoice() {
+		return RuleSet{}, matchFieldError("alliedSight", fmt.Sprintf("0: rule set %q keeps version 1's sight", r.RuleName))
+	}
 	// 16. Room content.
 	if err := r.validateRoomContent(); err != nil {
+		return RuleSet{}, err
+	}
+	if len(r.GeneratedMap) > matchConfigMaxExtensionLen {
+		return RuleSet{}, matchFieldError("generatedMap", fmt.Sprintf("at most %d bytes", matchConfigMaxExtensionLen))
+	}
+	if err := validateMatchExtensions(r.Extensions); err != nil {
 		return RuleSet{}, err
 	}
 	return set, nil
@@ -650,6 +744,9 @@ func (r *MatchConfigRequest) validateSeats(set RuleSet) error {
 	if humans == 0 {
 		return matchFieldError("seats", "at least one human seat")
 	}
+	if err := r.validateSeatStarts(set); err != nil {
+		return err
+	}
 	limit := matchComputersPerHost(set)
 	for host, count := range hosted {
 		if count > limit {
@@ -694,6 +791,34 @@ func (r *MatchConfigRequest) validateSeats(set RuleSet) error {
 	for i := range r.Seats {
 		if r.Seats[i].SharedVictory != matchTeamOfTwo(r.Seats, i) {
 			return matchFieldError(fmt.Sprintf("seats[%d].sharedVictory", i), "set exactly when the row's team holds two or more seats")
+		}
+	}
+	return nil
+}
+
+// validateSeatStarts checks required extension 17: a chosen point is set
+// only on a skirmish's human or computer row, under a rule set whose
+// SeatRules honours chosen starts, with coordinates below StartPointLimit.
+// Survival places its commanders itself (DESIGN_SURVIVAL §4.2), so every
+// Survival row holds none.
+func (r *MatchConfigRequest) validateSeatStarts(set RuleSet) error {
+	for i := range r.Seats {
+		p := r.Seats[i].Start
+		if !p.Set {
+			if p.X != 0 || p.Z != 0 {
+				return matchFieldError(fmt.Sprintf("seats[%d].start", i), "zero coordinates for an unset start")
+			}
+			continue
+		}
+		path := fmt.Sprintf("seats[%d].start", i)
+		if !seatRulesOf(set).ChosenStarts() {
+			return matchFieldError(path, fmt.Sprintf("unset: rule set %q assigns every start by Location", r.RuleName))
+		}
+		if role := r.Seats[i].Role; r.SessionKind != MatchOnlineSkirmish || (role != MatchRoleHuman && role != MatchRoleComputer) {
+			return matchFieldError(path, "unset except on a skirmish's human or computer row")
+		}
+		if p.X < 0 || p.Z < 0 || p.X >= StartPointLimit || p.Z >= StartPointLimit {
+			return matchFieldError(path, fmt.Sprintf("coordinates 0..%d", StartPointLimit-1))
 		}
 	}
 	return nil

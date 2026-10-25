@@ -71,6 +71,9 @@ func SurvivalConfigFor(mapName string, players []SkirmishPlayer, opts SurvivalOp
 	var used [SkirmishMaxPlayers]bool
 	for i, p := range players {
 		p.AllyGroup = team
+		// Survival places its commanders itself (DESIGN_SURVIVAL §4.2), so
+		// a start the skirmish rows chose does not come along.
+		p.Start = StartPoint{}
 		p.Controller = SkirmishControllerComputer
 		if i == 0 {
 			p.Controller = SkirmishControllerHuman
@@ -366,25 +369,35 @@ func (s *Session) survivalClassFor(def *content.UnitDef) *survivalClass {
 	if st == nil || def == nil || s.World == nil {
 		return nil
 	}
-	key := content.CanonicalKey(def.MovementClass)
-	var profile movement.Profile
-	if mc := s.movementClass(key); mc != nil {
-		profile = movement.NewProfile(mc)
-	} else {
-		profile = movement.NewScratchProfile(def)
-		key = "fbi:" + content.CanonicalKey(def.UnitName)
-	}
+	key, profile := s.movementClassProfile(def)
 	for _, c := range st.classes {
 		if c.key == key {
 			return c
 		}
 	}
+	c := s.labelMovementClass(key, profile)
+	st.classes = append(st.classes, c)
+	return c
+}
+
+// movementClassProfile is a definition's movement class key and profile: its
+// authored class, or a scratch profile from its own FBI keys.
+func (s *Session) movementClassProfile(def *content.UnitDef) (string, movement.Profile) {
+	key := content.CanonicalKey(def.MovementClass)
+	if mc := s.movementClass(key); mc != nil {
+		return key, movement.NewProfile(mc)
+	}
+	return "fbi:" + content.CanonicalKey(def.UnitName), movement.NewScratchProfile(def)
+}
+
+// labelMovementClass labels the terrain's connected regions for one
+// movement profile: terrain only, structures and features ignored.
+func (s *Session) labelMovementClass(key string, profile movement.Profile) *survivalClass {
 	t := s.World
 	c := &survivalClass{key: key, profile: profile}
 	c.regions = survival.Label(t.CellW, t.CellH, func(x, z int32) bool {
 		return profile.IsPassableFootprint(t, x, z)
 	})
-	st.classes = append(st.classes, c)
 	return c
 }
 

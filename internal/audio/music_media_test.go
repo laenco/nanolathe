@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nanolathe-gg/nanolathe/vfs"
 )
@@ -90,6 +91,52 @@ type musicProbeOutput struct {
 	outputSpy
 	names   []string
 	players []*musicProbePlayer
+}
+
+func TestRestingWindowPollsMusicCompletionAndTimerDeadline(t *testing.T) {
+	old := GlobalOutput()
+	out := &musicProbeOutput{}
+	SetGlobalOutput(out)
+	t.Cleanup(func() { SetGlobalOutput(old) })
+	s := NewService(musicFS(t, "1.wav"))
+	s.ConfigureMusic(false)
+	s.Music.Configure(ModeSingle, 0)
+	s.Music.nextTrack = 1
+	var now uint32
+	s.Music.SetPresentationClock(func() uint32 { return now })
+	s.StartMusic()
+	if err := s.ServiceMusic(); err != nil {
+		t.Fatal(err)
+	}
+	if delay := s.MusicServiceDelay(); delay != time.Second {
+		t.Fatalf("playing track poll = %v", delay)
+	}
+	out.players[0].completed = true
+	out.players[0].playing = false
+	if err := s.ServiceMusic(); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.players) != 2 || !out.players[1].playing {
+		t.Fatal("resting service did not start the next track")
+	}
+	s.Music.Configure(ModeCategoryShuffle, 0)
+	s.Music.SetTrackCategory(1, 0)
+	s.Music.SetVolume(32)
+	s.Music.SetDesired(1)
+	if delay := s.MusicServiceDelay(); delay != (2*time.Second+29)/30 {
+		t.Fatalf("fade deadline = %v, want two scaled clock units", delay)
+	}
+	now = 2
+	if err := s.ServiceMusic(); err != nil {
+		t.Fatal(err)
+	}
+	if out.players[1].volume >= float64(32<<10)/65535 {
+		t.Fatal("resting service froze the fade")
+	}
+	s.Music.Stop()
+	if delay := s.MusicServiceDelay(); delay != 0 {
+		t.Fatalf("stopped music still requests polls: %v", delay)
+	}
 }
 
 func (o *musicProbeOutput) NewMusicPlayer(source io.ReadSeeker, _ string) (MusicPlayer, error) {

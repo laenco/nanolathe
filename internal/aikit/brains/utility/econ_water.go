@@ -62,7 +62,7 @@ func (s *shared) freeSafeN(b *core.Board) {
 		s.setupConsSpot(m)
 	}
 	nw := consWords(len(s.consDefs))
-	leash := int64(s.p.ComRadius) * int64(s.p.ComRadius)
+	leash := s.comLeash() * s.comLeash()
 	for i := range m.Spots {
 		sp := &m.Spots[i]
 		if b.Spots[i] != core.SpotFree || s.spotBlock[i] > s.tick {
@@ -222,7 +222,7 @@ func (e *Economy) evalMexN(b *core.Board, u *aikit.OwnUnit, bs *builderState, d 
 		if s.spotBlock[i] > s.tick || (int32(i) == bs.blockSpot && bs.blockUntil > s.tick) {
 			continue
 		}
-		if com && aikit.Dist2(sp.X, sp.Z, b.HomeX, b.HomeZ) > int64(p.ComRadius)*int64(p.ComRadius) {
+		if com && s.comOff(b, sp.X, sp.Z) {
 			continue
 		}
 		if !s.canWorkSpot(c, reg, int32(i)) {

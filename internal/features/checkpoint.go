@@ -37,7 +37,7 @@ func (s *Service) CollectCheckpointReferences(c *CheckpointContext) (int, error)
 
 // WriteCheckpoint writes only the feature-service payload. Service fields:
 // BurnFrameGeometry, BurnSmoke, BurnSound, BurnWeapon, Crt, GeothermalSteam,
-// SequenceFrames, Sim, Terrain, Wind, arenaHeld, cursor; then count/key/instance
+// SequenceFrames, Sim, Terrain, Wind, Rules, arenaHeld, cursor; then count/key/instance
 // rows in numeric anchor order and count/key active order. Ports and Terrain
 // use presence tags after validation against the capture context.
 // Instance fields are AnimationSelector, BurnCountdown, CX, CZ,
@@ -70,6 +70,9 @@ func (s *Service) WriteCheckpoint(e *checkpoint.Encoder, c *CheckpointContext) e
 	e.Bool(s.Terrain != nil)
 	e.Field("features.Service.Wind")
 	e.Bool(s.Wind != nil)
+	kind, _ := CheckpointRulesKind(s.Rules) // validated by checkpointState
+	e.Field("features.Service.Rules")
+	e.U8(kind)
 	e.Field("features.Service.arenaHeld")
 	e.I64(int64(s.arenaHeld))
 	e.Field("features.Service.cursor")
@@ -193,6 +196,9 @@ func (s *Service) checkpointState(c *CheckpointContext) ([]int, []int, error) {
 	if err := s.validateCheckpointBindings(c); err != nil {
 		return nil, nil, err
 	}
+	if _, err := CheckpointRulesKind(s.Rules); err != nil {
+		return nil, nil, err
+	}
 	keys := slices.Sorted(maps.Keys(s.instances))
 	// A stale or absent key row rebuilds before use. A row advertised as
 	// valid is read directly, so exclusion requires checking its derivation.
@@ -245,8 +251,10 @@ func (s *Service) checkpointState(c *CheckpointContext) ([]int, []int, error) {
 			charged++
 		}
 	}
-	if charged != s.arenaHeld || s.arenaHeld < 0 || s.arenaHeld > FeatureAnimSlots {
-		return fail("features.Service.arenaHeld", "the charged live-arena count within capacity")
+	// An in-battle switch to Strict retains existing Modern records. Admission
+	// limits future allocations; checkpoint validity checks the actual records.
+	if charged != s.arenaHeld || s.arenaHeld < 0 {
+		return fail("features.Service.arenaHeld", "the exact charged live-arena count")
 	}
 	active := make([]int, 0)
 	seen := make(map[*Instance]bool)

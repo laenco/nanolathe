@@ -1158,6 +1158,7 @@ func (e *executor) execUnblock(c *Command, b *batch, tick uint32, w *units.World
 	if info == nil || !e.buildExitGrid(g, w, info, f.Handle, int32(int64(f.X)>>16), int32(int64(f.Z)>>16), true) {
 		e.stats.Failed++
 		e.stats.Reasons[FailResolve]++
+		e.stats.noteResolve(c.Kind, u)
 		e.checkpointReject()
 		return false
 	}
@@ -1195,6 +1196,7 @@ func (e *executor) execUnblock(c *Command, b *batch, tick uint32, w *units.World
 	if !issued {
 		e.stats.Failed++
 		e.stats.Reasons[FailResolve]++
+		e.stats.noteResolve(c.Kind, u)
 		e.checkpointReject()
 		return false
 	}
@@ -2017,6 +2019,7 @@ func (e *executor) execClear(c *Command, b *batch, tick uint32, w *units.World) 
 	if m == nil || t == nil || u.Def == nil || !u.Def.CanReclamate {
 		e.stats.Failed++
 		e.stats.Reasons[FailResolve]++
+		e.stats.noteResolve(c.Kind, u)
 		e.checkpointReject()
 		return false
 	}
@@ -2114,6 +2117,7 @@ func (e *executor) execClear(c *Command, b *batch, tick uint32, w *units.World) 
 	if !issued {
 		e.stats.Failed++
 		e.stats.Reasons[FailResolve]++
+		e.stats.noteResolve(c.Kind, u)
 		e.checkpointReject()
 		return false
 	}

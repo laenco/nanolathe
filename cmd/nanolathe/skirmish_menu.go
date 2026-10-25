@@ -39,6 +39,7 @@ func (g *gameShell) skirmishPlayerCountToken(token input.Token) {
 		if g.selectedSlot >= g.setup.NumPlayers {
 			g.selectedSlot = g.setup.NumPlayers - 1
 		}
+		g.fillShownRowResources()
 		g.saveSettings()
 		// The row builder lays out all rows from the new count, so a new
 		// runtime window is needed; the saved per-row choices stay in setup.

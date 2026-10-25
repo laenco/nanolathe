@@ -220,10 +220,9 @@ func (e *Economy) evalOpenReclaim(b *core.Board, u *aikit.OwnUnit, d *decision) 
 	}
 	com := u.Info.Role.Has(aikit.RoleCommander)
 	speed := speedOf(u.Info)
-	lim := int64(s.p.ComRadius) * int64(s.p.ComRadius)
 	best := cand{kind: cClear, spot: -1, spacing: openClearR}
 	for _, j := range s.openJobs(b.O) {
-		if com && aikit.Dist2(j.x, j.z, b.HomeX, b.HomeZ) > lim {
+		if com && s.comOff(b, j.x, j.z) {
 			continue
 		}
 		if r.recentAt(j.x, j.z, s.tick) {

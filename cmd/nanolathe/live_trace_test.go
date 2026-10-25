@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"io"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -21,6 +24,16 @@ func TestParseLiveScene(t *testing.T) {
 		got, err := parseLiveScene(text)
 		if err != nil || got != want {
 			t.Errorf("parseLiveScene(%q) = %+v, %v; want %+v", text, got, err, want)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		for text, want := range map[string]liveScene{
+			`capture:C:\cap`:   {Kind: "capture", Capture: `C:\cap`, Copies: 1},
+			`capture:C:\cap:3`: {Kind: "capture", Capture: `C:\cap`, Copies: 3},
+		} {
+			if got, err := parseLiveScene(text); err != nil || got != want {
+				t.Errorf("parseLiveScene(%q) = %+v, %v; want %+v", text, got, err, want)
+			}
 		}
 	}
 	for _, text := range []string{"coast", "coastal:0", "coastal:x", "field:10", "field:5000", "capture", "capture:", "capture:/tmp/c:0", "capture:/tmp/c:9"} {
@@ -56,6 +69,22 @@ func TestLiveTraceFlags(t *testing.T) {
 	} {
 		if _, err := parseFlags(args, io.Discard); err == nil {
 			t.Errorf("accepted %v", args)
+		}
+	}
+}
+
+// A refusal after the flags parse prints its reason: mainOptions exits with
+// status 2 and prints nothing itself, so an unprinted one is a silent exit.
+func TestLateFlagRefusalsSayWhy(t *testing.T) {
+	for _, args := range [][]string{
+		{"--map=x", "--live-trace=/tmp/unused-live", "--live-scene=capture:/tmp/unused-capture"},
+		{"--map=x", "--live-trace=/tmp/unused-live", "--live-speed=30"},
+		{"--live-unpaced"},
+		{"--benchmark-capture=/tmp/unused-capture"},
+	} {
+		var out bytes.Buffer
+		if _, err := parseFlags(args, &out); err == nil || !strings.Contains(out.String(), err.Error()) {
+			t.Errorf("parseFlags(%q) = %v; printed %q", args, err, out.String())
 		}
 	}
 }

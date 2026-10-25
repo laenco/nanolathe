@@ -85,7 +85,10 @@ func (v *VM) CheckpointContinuations() ([8]CheckpointContinuation, error) {
 // activeThreadCount, anims, bindings, dirty, lastReturnIdentity,
 // lastReturnValid, lastReturnValue, nextIdentity, onReturn, pieceFlags, prog,
 // statics, threadIdentity, tickDenom. bindings is the composition record;
-// onReturn is its logical continuation, never the Go function. pieceFlags
+// buildRate, the Builder speed factor, is composition too: the binding sets it
+// from the unit definition's recorded factor, which the content digest covers,
+// so it adds no bytes here. onReturn is its logical continuation, never the
+// Go function. pieceFlags
 // uses source tag 1 for the unbound local store, or source 0 for an attested
 // external unit store (DESIGN_MULTIPLAYER §16.3.5–§16.3.6, §16.3.55).
 //

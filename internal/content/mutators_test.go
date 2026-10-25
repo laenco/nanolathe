@@ -110,7 +110,7 @@ func featureValue(f *FeatureDef) FeatureDef {
 func TestZeroMutatorsLeaveTheCloneIdentical(t *testing.T) {
 	base := mutatorFixture(t)
 	one := Factor{1, 1}
-	for _, m := range []Mutators{{}, {BuildSpeed: one, BuildCost: one, Health: one, Damage: one, Sight: one, Radar: one, Income: one, Salvage: one, FireRate: one, UnitSpeed: one}} {
+	for _, m := range []Mutators{{}, {BuildSpeed: one, BuildCost: one, Health: one, Damage: one, Sight: one, Radar: one, Income: one, Salvage: one, FireRate: one, UnitSpeed: one, BuilderSpeed: one}} {
 		want, got := base.Clone(), base.Clone()
 		if err := got.ApplyMutators(m); err != nil {
 			t.Fatalf("ApplyMutators(%+v): %v", m, err)
@@ -692,7 +692,7 @@ func TestMutatedCatalogIdentity(t *testing.T) {
 // cases.
 func TestParseMutatorsRoundTrip(t *testing.T) {
 	for _, info := range MutatorCatalog() {
-		for _, step := range MutatorSteps {
+		for _, step := range info.Steps {
 			var m Mutators
 			if err := m.SetFactor(info.Key, step); err != nil {
 				t.Fatal(err)
@@ -732,6 +732,11 @@ func TestParseMutatorsRoundTrip(t *testing.T) {
 		{"damage": "×2"},
 		{"health": "2/1"},
 		{"buildCost": ""},
+		{"builderSpeed": "4"},
+		{"builderSpeed": "0.5"},
+		{"builderSpeed": "20.0"},
+		{"health": "20"},
+		{"unitSpeed": "5"},
 	} {
 		if _, err := ParseMutators(bad); err == nil {
 			t.Errorf("ParseMutators(%v) accepted", bad)
@@ -768,15 +773,31 @@ func TestMutatorCatalogDescribesTheClosedSet(t *testing.T) {
 			t.Fatalf("%s description %q is not one sentence", info.Key, info.Description)
 		}
 	}
-	if got := strings.Join(keys, ","); got != "buildSpeed,buildCost,income,salvage,health,damage,areaOfEffect,fireRate,unitSpeed,sight,radar" {
+	if got := strings.Join(keys, ","); got != "buildSpeed,buildCost,income,salvage,health,damage,areaOfEffect,fireRate,unitSpeed,builderSpeed,sight,radar" {
 		t.Fatalf("catalog order = %s", got)
 	}
-	if got := strings.Join(groups, ","); got != "Economy,Economy,Economy,Economy,Combat,Combat,Combat,Combat,Movement,Vision,Vision" {
+	if got := strings.Join(groups, ","); got != "Economy,Economy,Economy,Economy,Combat,Combat,Combat,Combat,Movement,Builders,Vision,Vision" {
 		t.Fatalf("catalog groups = %s", got)
 	}
+	// Every mutator shares the step list but Builder speed, which has its
+	// own (docs/DESIGN_MODS_MUTATORS.md §6.4).
+	for _, info := range infos {
+		want := MutatorSteps
+		if info.Key == "builderSpeed" {
+			want = []Factor{{1, 1}, {2, 1}, {3, 1}, {5, 1}, {8, 1}, {20, 1}}
+		}
+		if !reflect.DeepEqual(info.Steps, want) {
+			t.Fatalf("%s steps = %v, want %v", info.Key, info.Steps, want)
+		}
+	}
 	infos[0].Label = "changed"
-	if MutatorCatalog()[0].Label == "changed" {
+	infos[0].Steps[0] = Factor{9, 1}
+	if MutatorCatalog()[0].Label == "changed" || MutatorSteps[0] != (Factor{1, 4}) {
 		t.Fatal("MutatorCatalog must return a copy")
+	}
+	infos[9].Steps[1] = Factor{9, 1}
+	if BuilderSpeedSteps[1] != (Factor{2, 1}) {
+		t.Fatal("MutatorCatalog must copy Builder speed's own list")
 	}
 
 	var m Mutators
@@ -784,11 +805,12 @@ func TestMutatorCatalogDescribesTheClosedSet(t *testing.T) {
 		if f, ok := m.Factor(info.Key); !ok || f != (Factor{}) {
 			t.Fatalf("Factor(%s) on the zero set = %+v, %v", info.Key, f, ok)
 		}
-		if err := m.SetFactor(info.Key, Factor{3, 4}); err != nil {
+		step := info.Steps[len(info.Steps)-2]
+		if err := m.SetFactor(info.Key, step); err != nil {
 			t.Fatal(err)
 		}
-		if f, _ := m.Factor(info.Key); f != (Factor{3, 4}) || !strings.Contains(m.String(), info.Key+"=0.75") {
-			t.Fatalf("SetFactor(%s) did not store 3/4: %q", info.Key, m.String())
+		if f, _ := m.Factor(info.Key); f != step || !strings.Contains(m.String(), info.Key+"="+step.String()) {
+			t.Fatalf("SetFactor(%s) did not store %s: %q", info.Key, step, m.String())
 		}
 	}
 	for _, info := range MutatorCatalog() {
@@ -811,6 +833,18 @@ func TestMutatorCatalogDescribesTheClosedSet(t *testing.T) {
 	if err := m.SetFactor("health", Factor{5, 1}); err == nil || m != (Mutators{}) {
 		t.Fatal("SetFactor accepted a factor off the step list")
 	}
+	if err := m.SetFactor("builderSpeed", Factor{4, 1}); err == nil || m != (Mutators{}) {
+		t.Fatal("SetFactor accepted a Builder speed factor off its own list")
+	}
+	if err := m.SetFactor("builderSpeed", Factor{1, 2}); err == nil || m != (Mutators{}) {
+		t.Fatal("SetFactor accepted a shared step for Builder speed")
+	}
+	if err := (Mutators{BuilderSpeed: Factor{4, 1}}).validate(); err == nil || !strings.Contains(err.Error(), "builderSpeed") {
+		t.Fatalf("validate = %v, want a builderSpeed refusal", err)
+	}
+	if err := (Mutators{BuilderSpeed: Factor{20, 1}, UnitSpeed: Factor{4, 1}}).validate(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestFactorSpellingAndCycling covers the UI helpers: canonical spelling,
@@ -821,30 +855,151 @@ func TestFactorSpellingAndCycling(t *testing.T) {
 	}
 	f := MutatorSteps[0]
 	for i := 1; i < len(MutatorSteps); i++ {
-		f = f.Next()
+		f = f.NextIn(MutatorSteps)
 		if f != MutatorSteps[i] {
-			t.Fatalf("Next walk reached %s at %d, want %s", f, i, MutatorSteps[i])
+			t.Fatalf("NextIn walk reached %s at %d, want %s", f, i, MutatorSteps[i])
 		}
 	}
-	if f.Next() != f {
-		t.Fatal("Next must clamp at the last step")
+	if f.NextIn(MutatorSteps) != f {
+		t.Fatal("NextIn must clamp at the last step")
 	}
 	for i := len(MutatorSteps) - 2; i >= 0; i-- {
-		f = f.Prev()
+		f = f.PrevIn(MutatorSteps)
 		if f != MutatorSteps[i] {
-			t.Fatalf("Prev walk reached %s at %d, want %s", f, i, MutatorSteps[i])
+			t.Fatalf("PrevIn walk reached %s at %d, want %s", f, i, MutatorSteps[i])
 		}
 	}
-	if f.Prev() != f {
-		t.Fatal("Prev must clamp at the first step")
+	if f.PrevIn(MutatorSteps) != f {
+		t.Fatal("PrevIn must clamp at the first step")
 	}
-	if (Factor{}).Next() != (Factor{3, 2}) || (Factor{}).Prev() != (Factor{3, 4}) {
+	if (Factor{}).NextIn(MutatorSteps) != (Factor{3, 2}) || (Factor{}).PrevIn(MutatorSteps) != (Factor{3, 4}) {
 		t.Fatal("the zero value cycles as 1/1")
 	}
 	for _, step := range MutatorSteps {
-		parsed, err := ParseFactor(step.String())
+		parsed, err := parseFactorIn(step.String(), MutatorSteps)
 		if err != nil || parsed != step {
-			t.Fatalf("ParseFactor(%q) = %+v, %v", step.String(), parsed, err)
+			t.Fatalf("parseFactorIn(%q) = %+v, %v", step.String(), parsed, err)
 		}
+	}
+	// Builder speed cycles on its own list, from the identity at its foot.
+	builder := BuilderSpeedSteps
+	f = Factor{}
+	for _, want := range []string{"2", "3", "5", "8", "20", "20"} {
+		if f = f.NextIn(builder); f.String() != want {
+			t.Fatalf("NextIn walk reached %s, want %s", f, want)
+		}
+	}
+	for _, want := range []string{"8", "5", "3", "2", "1", "1"} {
+		if f = f.PrevIn(builder); f.String() != want {
+			t.Fatalf("PrevIn walk reached %s, want %s", f, want)
+		}
+	}
+	if (Factor{}).PrevIn(builder) != (Factor{1, 1}) || (Factor{4, 1}).NextIn(builder) != (Factor{5, 1}) || (Factor{4, 1}).PrevIn(builder) != (Factor{3, 1}) {
+		t.Fatal("an off-list factor moves to the neighbouring steps")
+	}
+	if (Factor{20, 1}).String() != "20" || (Factor{20, 1}).Label() != "×20" {
+		t.Fatal("Builder speed's largest step spells as a whole number")
+	}
+	if _, err := parseFactorIn("20", MutatorSteps); err == nil {
+		t.Fatal("the shared list accepted Builder speed's 20")
+	}
+}
+
+// builderFixture marks the mutator fixture's units for Builder speed: the
+// ground armbuilder and the flying corloop are mobile builders (bmcode 1),
+// armtwin is a builder the allocator gives no mover, as a factory or a nano
+// tower is, with a turn rate to show it is left alone, and corplain, a
+// non-builder, carries motion values to show it is untouched.
+func builderFixture(t *testing.T) *Catalog {
+	t.Helper()
+	c := mutatorFixture(t)
+	c.Units["armbuilder"].Builder, c.Units["armbuilder"].BMCode = true, 1
+	c.Units["corloop"].Builder, c.Units["corloop"].BMCode = true, 1
+	c.Units["armtwin"].Builder, c.Units["armtwin"].TurnRate = true, 700
+	c.Units["corplain"].BMCode, c.Units["corplain"].MaxVelocity, c.Units["corplain"].Acceleration = 1, 1<<16, 900
+	c.Units["corplain"].BrakeRate, c.Units["corplain"].TurnRate = 2000, 400
+	return c
+}
+
+// TestBuilderSpeedScalesBuilderAgility locks the Builder speed transform
+// (docs/DESIGN_MODS_MUTATORS.md "Builder speed"): a ground mobile builder
+// turns and accelerates and brakes k× as fast and keeps its top speed; a
+// flying one gains turn rate only, because the flight integrator reads
+// acceleration and brakerate as speed terms [04 §10.1]; a builder without a
+// mover gains nothing but the recorded factor; a non-builder is untouched.
+// Turn rate saturates at its unsigned 16-bit store.
+func TestBuilderSpeedScalesBuilderAgility(t *testing.T) {
+	base := builderFixture(t)
+	c := base.Clone()
+	if err := c.ApplyMutators(Mutators{BuilderSpeed: Factor{5, 1}}); err != nil {
+		t.Fatal(err)
+	}
+	g, a, fixed := c.Units["armbuilder"], c.Units["corloop"], c.Units["armtwin"]
+	if g.TurnRate != 2500 || g.Acceleration != 5000 || g.BrakeRate != 15000 || g.MaxVelocity != 1<<16 || g.MoveRate1 != 2<<16 || g.MoveRate2 != 2<<16 {
+		t.Errorf("ground builder: w %d a %d b %d v %d moverates %d/%d", g.TurnRate, g.Acceleration, g.BrakeRate, g.MaxVelocity, g.MoveRate1, g.MoveRate2)
+	}
+	if a.TurnRate != 65535 || a.Acceleration != 20000 || a.BrakeRate != 100000 || a.MaxVelocity != 600000 || a.MoveRate1 != 900000 {
+		t.Errorf("flying builder: w %d a %d b %d v %d moverate %d", a.TurnRate, a.Acceleration, a.BrakeRate, a.MaxVelocity, a.MoveRate1)
+	}
+	if fixed.TurnRate != 700 {
+		t.Errorf("builder without a mover: turn rate %d", fixed.TurnRate)
+	}
+	for _, key := range []string{"armbuilder", "corloop", "armtwin"} {
+		if c.Units[key].BuilderSpeed != (Factor{5, 1}) {
+			t.Errorf("%s records %+v, want 5/1", key, c.Units[key].BuilderSpeed)
+		}
+	}
+	if !reflect.DeepEqual(unitValue(c.Units["corplain"]), unitValue(base.Units["corplain"])) {
+		t.Error("a non-builder changed")
+	}
+	if c.Hash == base.Hash {
+		t.Error("Builder speed did not move the catalog identity")
+	}
+	// Builders keep their factor and agility only on the clone.
+	if base.Units["armbuilder"].BuilderSpeed != (Factor{}) || base.Units["armbuilder"].TurnRate != 500 {
+		t.Error("the transform wrote through to the base catalog")
+	}
+}
+
+// TestBuilderSpeedComposesWithUnitSpeed: with Unit speed each motion field is
+// scaled once by the exact product, formed in 64 bits rather than as a Factor
+// (×4² × 20 is 320, which an 8-bit numerator would wrap to 64), then
+// saturated (docs/DESIGN_MODS_MUTATORS.md §6.4).
+func TestBuilderSpeedComposesWithUnitSpeed(t *testing.T) {
+	for _, tc := range []struct {
+		unit, builder              Factor
+		gw, ga, gb, gv             int32
+		aw, aa, ab, av, plainAccel int32
+	}{
+		// ground: turn ku·kb, accel ku²·kb, brake ku²·kb; air: turn ku·kb,
+		// accel ku², brake ku. corplain is not a builder: accel ku².
+		{Factor{2, 1}, Factor{20, 1}, 20000, 80000, 240000, 131072, 65535, 80000, 200000, 1200000, 3600},
+		{Factor{4, 1}, Factor{20, 1}, 40000, 320000, 960000, 262144, 65535, 320000, 400000, 2400000, 14400},
+		{Factor{1, 4}, Factor{2, 1}, 250, 125, 375, 16384, 20000, 1250, 25000, 150000, 56},
+		{Factor{3, 2}, Factor{3, 1}, 2250, 6750, 20250, 98304, 65535, 45000, 150000, 900000, 2025},
+	} {
+		c := builderFixture(t).Clone()
+		if err := c.ApplyMutators(Mutators{UnitSpeed: tc.unit, BuilderSpeed: tc.builder}); err != nil {
+			t.Fatal(err)
+		}
+		g, a, p := c.Units["armbuilder"], c.Units["corloop"], c.Units["corplain"]
+		if g.TurnRate != tc.gw || g.Acceleration != tc.ga || g.BrakeRate != tc.gb || g.MaxVelocity != tc.gv {
+			t.Errorf("×%s ×%s ground: w %d a %d b %d v %d, want %d %d %d %d", tc.unit, tc.builder, g.TurnRate, g.Acceleration, g.BrakeRate, g.MaxVelocity, tc.gw, tc.ga, tc.gb, tc.gv)
+		}
+		if a.TurnRate != tc.aw || a.Acceleration != tc.aa || a.BrakeRate != tc.ab || a.MaxVelocity != tc.av {
+			t.Errorf("×%s ×%s air: w %d a %d b %d v %d, want %d %d %d %d", tc.unit, tc.builder, a.TurnRate, a.Acceleration, a.BrakeRate, a.MaxVelocity, tc.aw, tc.aa, tc.ab, tc.av)
+		}
+		if p.Acceleration != tc.plainAccel {
+			t.Errorf("×%s ×%s non-builder accel %d, want %d", tc.unit, tc.builder, p.Acceleration, tc.plainAccel)
+		}
+	}
+	// The 16.16 stores saturate rather than wrap.
+	c := builderFixture(t)
+	c.Units["armbuilder"].Acceleration, c.Units["armbuilder"].BrakeRate = 1<<30, -7
+	if err := c.ApplyMutators(Mutators{UnitSpeed: Factor{4, 1}, BuilderSpeed: Factor{20, 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if g := c.Units["armbuilder"]; g.Acceleration != math.MaxInt32 || g.BrakeRate != -7 {
+		t.Fatalf("saturation: accel %d brake %d, want %d and the negative value kept", g.Acceleration, g.BrakeRate, int32(math.MaxInt32))
 	}
 }

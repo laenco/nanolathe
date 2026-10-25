@@ -34,6 +34,15 @@ type uclass struct {
 	// torp is set when the unit carries a torpedo (it can hit submarines
 	// and ships, nothing on land).
 	torp bool
+	// wallDPS is the damage per second the unit's surface weapons do to a
+	// wall piece (walls.go). A shell that strikes a piece bursts at its face
+	// and the piece takes the weapon's default damage only when the burst
+	// reaches its centre, closer than half the authored area of effect
+	// [06 §9.3][06 §13.1]; a two-cell piece's centre lies 16 to 23 wu
+	// behind the face. Weapons with a radius of 24 or more count in full,
+	// those of 16 to 23 at half (measured: light cannons dealt about half
+	// their fire to a dragon's tooth), smaller ones not at all.
+	wallDPS int32
 }
 
 func (c *uclass) air() bool { return c.kind >= ukFighter }
@@ -89,6 +98,11 @@ func classOf(u *aikit.UnitInfo, sea int32) uclass {
 		default:
 			c.surfDPS += dps
 			torpOnly = false
+			if r := w.AreaOfEffect >> 1; !w.UnitsOnly && !w.Paralyzer && r >= 24 {
+				c.wallDPS += dps
+			} else if !w.UnitsOnly && !w.Paralyzer && r >= 16 {
+				c.wallDPS += dps / 2
+			}
 			if w.Dropped {
 				dropped = true
 			} else {

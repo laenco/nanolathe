@@ -77,6 +77,9 @@ func (pr *Production) commandAssists(b *core.Board, budget int) int {
 			continue
 		}
 		f, frame := pr.assistTarget(b, u, m)
+		if f >= 0 && !canGuard(u.Info) {
+			f = -1 // refuses Guard: help frames only
+		}
 		var one [1]pool.Handle
 		one[0] = u.H
 		switch {

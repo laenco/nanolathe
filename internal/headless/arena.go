@@ -47,6 +47,12 @@ type ArenaRequest struct {
 	WatchFrom uint32
 	Root      string
 	Roots     []string
+	// Content is the content section the catalog compiles under: a mod's
+	// own config's, when the roots end in that mod. The zero value is the
+	// base game's profile (profiles.Retail). Only the content applies; the
+	// match keeps the arena's rule set, so a config's Community table does
+	// not (docs/DESIGN_CONTENT_VFS.md §5 "Content profiles").
+	Content profiles.Profile
 	// Addons are add-on archives mounted at the first root's *.UFO tier,
 	// as enabled add-ons are (docs/DESIGN_MODS_MUTATORS.md §5.8).
 	Addons   []string
@@ -593,6 +599,7 @@ type ArenaResult struct {
 	Level       ArenaLevel          `json:"level,omitempty"`
 	RuleSet     string              `json:"rule_set,omitempty"`     // the registered set the request named
 	Mutators    string              `json:"mutators,omitempty"`     // the canonical mutator set the battle bound
+	Content     string              `json:"content,omitempty"`      // the content section's id when not the base game's
 	ValuesFixed int                 `json:"values_fixed,omitempty"` // units priced by ArenaRequest.Values
 	Ticks       uint32              `json:"ticks"`
 	Winner      int                 `json:"winner"` // player index in Players, -1 draw
@@ -942,8 +949,9 @@ func RunArenaMatch(req ArenaRequest) (ArenaResult, error) {
 		return ArenaResult{}, err
 	}
 	defer fs.Close()
-	// The arena plays the base game: its profile, and no content source.
-	view, profile := contentView(fs, profiles.Retail())
+	// The arena plays the request's content section, the base game's by
+	// default, and no Community source.
+	view, profile := contentView(fs, req.Content)
 	catalog, err := content.CompileWithOptions(view, content.Options{Limits: content.LimitsFromProfile(profile.Limits)})
 	if err != nil {
 		return ArenaResult{}, diagnostic("catalog compile failed: "+err.Error(), req.Map, fs.ProviderIDs(), "a complete compiled catalog")
@@ -1176,7 +1184,7 @@ func playArena(req ArenaRequest, sess *session.Session) (ArenaResult, error) {
 		}
 	})
 
-	result := ArenaResult{Map: req.Map, Seed: req.Seed, BattleSeed: sess.RNGSimSeed, CRTSeed: sess.RNGCrtSeed, Starts: req.Starts, ScoreKind: req.Score, Gameplay: string(sess.Gameplay), Level: req.Level, RuleSet: string(req.Gameplay), Mutators: sess.Mutators.String(), ValuesFixed: fixed, Winner: -1}
+	result := ArenaResult{Map: req.Map, Seed: req.Seed, BattleSeed: sess.RNGSimSeed, CRTSeed: sess.RNGCrtSeed, Starts: req.Starts, ScoreKind: req.Score, Gameplay: string(sess.Gameplay), Level: req.Level, RuleSet: string(req.Gameplay), Mutators: sess.Mutators.String(), Content: req.Content.Name, ValuesFixed: fixed, Winner: -1}
 	var adj *adjudicator
 	var adjScores []int64
 	var adjAlive []bool

@@ -2,6 +2,7 @@ package replay_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"os"
@@ -342,8 +343,18 @@ func TestOnlineRecordingPlaysBack(t *testing.T) {
 		}
 	}
 
-	// Cut inside the last chunks: everything before plays.
-	cut := rec.data[:len(rec.data)*2/3]
+	// Cut just after the first complete chunk: that chunk still plays,
+	// independently of header metadata and reserved-space size.
+	at := len(replay.Magic)
+	_, n := binary.Uvarint(rec.data[at:]) // format version
+	at += n
+	headerSize, n := binary.Uvarint(rec.data[at:])
+	at += n + int(headerSize)
+	compressedSize, n := binary.Uvarint(rec.data[at:])
+	at += n
+	_, n = binary.Uvarint(rec.data[at:]) // raw size
+	at += n + int(compressedSize)
+	cut := rec.data[:at+1]
 	cutSummary, err := replay.Summarize(cut)
 	if err != nil {
 		t.Fatal(err)

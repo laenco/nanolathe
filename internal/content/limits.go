@@ -31,9 +31,16 @@ const MaxDefinitionDomain = 65536
 // files is sized by what the file declares, never by a byte budget — so
 // raising them admits larger authored content without changing how any of it
 // is read [03 R-COMP-02 §1] [fmt tnt].
+//
+// The baseline admits the installs players run, not only a stock 3.1 one. TA
+// Unofficial Patch 3.9.02 replaces rev31.gp3 with one whose gamedata/los.tdf
+// is 2,377,872 bytes (90 tables), and community map packs carry terrain files
+// up to about 65 MiB, where a TNT with the full 65536-tile table ends. The TNT
+// decode limits in formats (formats.TNTLimits) still bound what a terrain
+// file can make the engine allocate.
 const (
-	RetailTNTBytes int64 = 16 << 20
-	RetailLOSBytes int64 = 1 << 20
+	RetailTNTBytes int64 = 128 << 20
+	RetailLOSBytes int64 = 8 << 20
 )
 
 // Limits are the table sizes a catalog compile enforces. They are content

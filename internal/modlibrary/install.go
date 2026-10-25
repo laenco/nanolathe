@@ -35,6 +35,9 @@ type InstallOptions struct {
 	// Source is recorded in the receipt: the download URL, or empty for
 	// "local:<original file name>".
 	Source string
+	// Recipe, when non-empty, is recorded in the receipt: how the host made
+	// the package (Receipt.Recipe).
+	Recipe string
 	// Replace permits a catalogue package to replace the same id/version.
 	// It requires ExpectIdentity, SHA256 and Size; manual installs still
 	// refuse duplicates. The old install survives until validation succeeds.
@@ -131,7 +134,7 @@ func (l *Library) InstallArchive(zipPath string, opts InstallOptions) (Mod, erro
 			name: file.Name, dir: dir, mode: file.Mode().Type(), size: file.UncompressedSize64, open: file.Open,
 		})
 	}
-	receipt := Receipt{SHA256: sum, Size: info.Size(), Source: opts.Source}
+	receipt := Receipt{SHA256: sum, Size: info.Size(), Source: opts.Source, Recipe: opts.Recipe}
 	return l.install(provider, strings.TrimSuffix(provider, filepath.Ext(provider)), entries, opts, receipt)
 }
 
@@ -187,7 +190,7 @@ func (l *Library) InstallDirectory(dir string, opts InstallOptions) (Mod, error)
 	if err != nil {
 		return Mod{}, diagnostic("reading the mod folder failed: "+err.Error(), dir, []string{provider}, "a readable folder")
 	}
-	return l.install(provider, provider, entries, opts, Receipt{Source: opts.Source})
+	return l.install(provider, provider, entries, opts, Receipt{Source: opts.Source, Recipe: opts.Recipe})
 }
 
 func (l *Library) entryCapError(provider string) error {

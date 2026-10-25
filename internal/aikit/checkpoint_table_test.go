@@ -157,6 +157,7 @@ func TestCheckpointTableDerivedValuesAndIdentityAreSealed(t *testing.T) {
 		{"footprint", func(u *UnitInfo) { u.FootZ++ }},
 		{"build depth", func(u *UnitInfo) { u.Depth++ }},
 		{"restriction", func(u *UnitInfo) { u.Cap++ }},
+		{"profile ban", func(u *UnitInfo) { u.banned = !u.banned }},
 		{"equal definition copy", func(u *UnitInfo) { d := *u.Def; u.Def = &d }},
 		{"finished feature", func(u *UnitInfo) { u.FinishedFeature = cat.Features["barrier"] }},
 	} {

@@ -21,6 +21,9 @@ type Receipt struct {
 	Size      int64     `json:"size,omitempty"`
 	Source    string    `json:"source,omitempty"` // URL or "local:<original file name>"
 	Installed time.Time `json:"installed"`
+	// Recipe is how a package the host made was made, as text the host
+	// wrote: a generated map's recipe (docs/DESIGN_MAP_GENERATOR.md §10).
+	Recipe string `json:"recipe,omitempty"`
 }
 
 // Mod is one installed mod version. Its Metadata carries the mod's Config

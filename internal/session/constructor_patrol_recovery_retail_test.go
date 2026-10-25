@@ -7,71 +7,69 @@ import (
 	"testing"
 
 	"github.com/nanolathe-gg/nanolathe/internal/orders"
-	"github.com/nanolathe-gg/nanolathe/internal/sim/numeric"
 	"github.com/nanolathe-gg/nanolathe/internal/units"
 )
 
-// Target loss must preserve the physical return and keep borrowing paused until
-// actual waypoint arrival: DESIGN_UNITS_ORDERS_COB "Modern patrol work".
-func TestModernConstructorPatrolTargetLossRecoversAtWaypointRetail(t *testing.T) {
+// constructorPatrolRemembered reports whether the helper's failed-target
+// memory holds a unit entry for h.
+func (f *constructorPatrolRuntime) constructorPatrolRemembered(kind uint8, h uint32) bool {
+	for _, e := range f.q.PatrolWorkTrace().Entries {
+		if e.Kind == kind && uint32(e.Handle) == h {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *constructorPatrolRuntime) constructorPatrolMemoryEmpty() bool {
+	return f.q.PatrolWorkTrace().Entries == [8]orders.PatrolMemoryEntry{}
+}
+
+// Target loss is an ordinary failed job under DESIGN_UNITS_ORDERS_COB
+// "Smarter patrol — 2026-10-22": the saved return is dropped, the helper
+// continues the pending leg from where it stands and borrows other work at
+// once. A destroyed target's reference is unlinked, so nothing is remembered
+// against its reused handle. TestModernConstructorPatrolMovingTargetAbandonsRetail
+// covers a remembered live target and its waypoint recovery.
+func TestModernConstructorPatrolTargetLossContinuesLegRetail(t *testing.T) {
 	for _, key := range []string{"armcv", "armca"} {
 		for stance := uint32(0); stance < 3; stance++ {
 			t.Run(fmt.Sprintf("%s/stance%d", key, stance), func(t *testing.T) {
 				f := newConstructorPatrolRuntime(t, key, stance, nil)
-				// Keep the first route leg in the locally exercised corridor. Initial
-				// scene staging precedes acquisition; both retained route identities stay.
-				f.route[0].GoalX = numeric.FixedFromInt(1000)
-				f.route[0].GoalZ = numeric.FixedFromInt(584)
-				f.route[0].GoalY = f.s.World.HeightAt(f.route[0].GoalX, f.route[0].GoalZ)
-				f.goals[0] = constructorPatrolPoint{f.route[0].GoalX, f.route[0].GoalY, f.route[0].GoalZ}
 				target := f.lateNanoframe(160)
 				f.waitForBorrow(target)
-				var back *orders.Node
-				for _, n := range f.q.Primary() {
-					if n.IsPatrolReturn() {
-						back = n
-						break
-					}
-				}
-				if back == nil {
-					t.Fatal("borrowed job has no saved return")
-				}
-				anchor := constructorPatrolPoint{back.GoalX, back.GoalY, back.GoalZ}
 				f.s.Units.Destroy(target.Handle, units.DeathUnknown)
-				for i := 0; i < 120 && !f.q.PatrolWorkPaused(); i++ {
-					f.step()
-				}
-				if !f.q.PatrolWorkPaused() {
-					t.Fatalf("target destruction did not pause patrol work: helper alive=%v dying=%v hp=%d target alive=%v dying=%v remaining=%g head=%s", f.helper.Alive, f.helper.Dying, f.helper.Health, target.Alive, target.Dying, target.Remaining, constructorPatrolName(f.q.Head()))
-				}
-				returned, recovered := false, false
-				for i := 0; i < 3000; i++ {
-					before := f.q.Head()
+				resumed := false
+				for i := 0; i < 120 && !resumed; i++ {
 					f.step()
 					f.assertRetained()
-					head := f.q.Head()
-					if (before == back || head == back) && constructorPatrolPosition(f.helper).distanceSquared(anchor) <= 24*24 {
-						returned = true
-					}
-					if !f.q.PatrolWorkPaused() {
-						atWaypoint := false
-						for _, p := range f.goals {
-							if constructorPatrolPosition(f.helper).distanceSquared(p) <= 48*48 {
-								atWaypoint = true
-							}
-						}
-						if !returned || !atWaypoint {
-							t.Fatalf("pause cleared before physical return and waypoint: returned=%v atWaypoint=%v position=(%d,%d)", returned, atWaypoint, f.helper.X.Floor(), f.helper.Z.Floor())
-						}
-						recovered = true
-						break
-					}
-					if head != nil && head.Target != 0 {
-						t.Fatalf("borrowed before waypoint recovery: %s target=%d", constructorPatrolName(head), head.Target)
+					resumed = constructorPatrolName(f.q.Head()) == f.patrol
+				}
+				if !resumed {
+					t.Fatalf("target destruction did not resume the patrol: helper alive=%v hp=%d target alive=%v dying=%v head=%s", f.helper.Alive, f.helper.Health, target.Alive, target.Dying, constructorPatrolName(f.q.Head()))
+				}
+				for _, n := range f.q.Primary() {
+					if n.IsPatrolReturn() {
+						t.Fatal("target loss kept the saved-position return")
 					}
 				}
-				if !recovered {
-					t.Fatalf("never reached a patrol waypoint after invalid target; position=(%d,%d) goal=(%d,%d) alive=%v dying=%v hp=%d head=%s return=%v", f.helper.X.Floor(), f.helper.Z.Floor(), int64(back.GoalX)/int64(numeric.FixedFromInt(1)), int64(back.GoalZ)/int64(numeric.FixedFromInt(1)), f.helper.Alive, f.helper.Dying, f.helper.Health, constructorPatrolName(f.q.Head()), returned)
+				if !f.constructorPatrolMemoryEmpty() {
+					t.Fatalf("a freed target left a memory entry: %+v", f.q.PatrolWorkTrace())
+				}
+				// Fresh work in sight is borrowed at once, even on the freed
+				// target's reused handle: there is no route-wide pause.
+				resumedAt := constructorPatrolPosition(f.helper)
+				decoy := f.lateNanoframe(120)
+				f.waitForBorrow(decoy)
+				if resumedAt.distanceSquared(constructorPatrolPosition(f.helper)) > int64(f.helper.Def.SightDistance)*int64(f.helper.Def.SightDistance) {
+					t.Fatal("the helper travelled away before borrowing fresh work")
+				}
+				for i := 0; i < 600; i++ {
+					if head := f.q.Head(); head != nil && head.IsPatrolReturn() {
+						t.Fatal("a job end started a return trip")
+					}
+					f.step()
+					f.assertRetained()
 				}
 			})
 		}

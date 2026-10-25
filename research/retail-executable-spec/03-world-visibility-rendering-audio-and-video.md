@@ -1161,6 +1161,18 @@ consumer families that form a world point.
 The per-unit rasterizer projects every piece vertex with the section 2.5
 projection, then walks pieces and primitives with these established rules:
 
+**Established (direct-static) — independent piece visibility.** Both shaded
+and unshaded renderers test the current piece's own draw flag; hiding a parent
+does not hide its descendants. Transform composition still traverses hidden
+parents, so their rotations and translations continue to position visible
+children. The show/hide adapter changes only the named piece's draw flag.
+Initialization sets each piece's draw flag iff that piece has at least three
+vertices, while initializing its cache and shade flags independently. A
+one-vertex transform parent therefore starts hidden without hiding its
+geometry-bearing children. Body bounds, shadow bounds/raster admission and
+nanoframe outlines likewise test each piece's own flag, not ancestor flags.
+Shadow polygon admission additionally requires the piece's cache flag.
+
 1. **Selection plate exclusion.** When a piece declares a selection
    primitive (swapped to index 0 at load), the primitive loop starts at
    index 1 — the plate is never drawn as a model face. Unit picking is a 2D
@@ -1250,7 +1262,8 @@ transform chain of [03 §2.4] is unchanged by it.
 ##### 1. The composition image
 
 Before any piece is drawn the engine measures the model. It walks every
-**visible** piece (draw bit set) and every vertex of those pieces, projects
+**visible** piece (that piece's own draw bit set, independent of ancestors)
+and every vertex of those pieces, projects
 each vertex with the ordinary orthographic rule of [03 §2.5] **minus the
 viewport bias** — `sx = hi16(x)`, `sy = hi16(-z) - (hi16(y) >> 1)`, where
 `hi16` is the high word of the 16.16 value, a floor ([R-RAST-01 §2] has the
@@ -1412,9 +1425,11 @@ says which half to draw:
 - **mode "live"** — draw only pieces whose cache bit is clear;
 - **mode "all"** — draw every visible piece regardless.
 
-A unit under construction overrides the filter: while the construction
+A unit under construction overrides the cache filter: while the construction
 fraction is not the completed sentinel every visible piece is admitted in
-every mode.
+every mode. The current piece's draw flag is tested before this selector;
+construction does not unhide pieces, and ancestor draw flags do not filter
+either lane.
 
 The composition image built in §1 is the **cached** half, and it is rebuilt
 when the unit is first drawn, when the orientation cache of [03 §5.2]
@@ -1947,6 +1962,15 @@ The body's own placement is the same expression with `+128` and the unit's own
 height in the shear ([R-REN-03A §9]). So the shadow sits **five pixels right of
 the body** and is sheared by the ground rather than by the model, which is what
 makes a shadow slide up a slope while the unit stays put.
+
+**Established (direct-static):** placement consumes the bilinear terrain query
+without testing its off-map sentinel or flooring it at sea level. The query
+returns `−1` outside its valid rectangle, including the final plot row and
+column [R-TERR-01 §4]. Since `−1 >> 1` is `−1`, crossing from a valid terrain
+height `h` to that sentinel moves the shadow down by `(h >> 1) + 1` pixels,
+in addition to the unit's ordinary movement. The body's height shear still
+uses the unit's own altitude. Both mobile silhouette branches have this
+discontinuity, and re-entering the valid rectangle restores the terrain shear.
 
 ##### 4. The tinted blitter is an `ALP` blend
 

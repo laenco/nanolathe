@@ -4,7 +4,7 @@ package main
 // DESIGN_MODS_MUTATORS §5.7). A room lists each add-on its battle mounts by
 // id, version and content identity — one the host mounts from its library,
 // or one whose archives sit byte-identical in the host's folder — and every
-// seat mounts the listed add-ons at its base install's *.UFO tier: its own
+// seat mounts the listed add-ons in their audited local layers: its own
 // copy, the library's, or one the lobby downloads from the add-on catalogue
 // and enables.
 
@@ -278,7 +278,7 @@ func roomAddons(cs *contentSet, archives []localArchive, known []knownAddon) ([]
 // catalogue offers it; missing otherwise.
 func resolveRoomAddon(cs *contentSet, local map[string]localArchive, known []knownAddon, e session.MatchContentEntry, plan *roomContentPlan) {
 	if a := mountedAddon(cs, e); a != nil {
-		plan.addons = append(plan.addons, a.Paths...)
+		plan.addons = append(plan.addons, *a)
 		return
 	}
 	for _, k := range known {
@@ -286,13 +286,13 @@ func resolveRoomAddon(cs *contentSet, local map[string]localArchive, known []kno
 			continue
 		}
 		if paths, ok := folderAddonPaths(local, k.archives); ok {
-			plan.addons = append(plan.addons, paths...)
+			plan.addons = append(plan.addons, addonlibrary.Addon{ID: k.id, Version: k.version, Name: k.name, Archives: k.archives, Paths: paths})
 			return
 		}
 	}
 	for _, k := range known {
 		if k.is(e) && k.installed != nil {
-			plan.addons = append(plan.addons, k.installed.Paths...)
+			plan.addons = append(plan.addons, *k.installed)
 			plan.enable = append(plan.enable, settings.AddonSelection{ID: k.id, Version: k.version})
 			return
 		}

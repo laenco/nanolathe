@@ -64,6 +64,10 @@ no RNG and no per-tick state, and it is owned by
 [DESIGN_MODS_MUTATORS](docs/DESIGN_MODS_MUTATORS.md) §6. Strict 3.1 *with no
 mutators* is the retail baseline, and every fingerprint lock runs with none.
 Anything data cannot express is not a mutator and follows the rules above.
+The one exception is Builder speed (user-authorized 2026-10-22): its factor,
+recorded on each builder definition, is read by engine code to run the
+builder's build-animation script functions faster and to start a mobile build
+once in reach, as DESIGN_MODS_MUTATORS "Builder speed" bounds it.
 
 **Survival is a second mode-independent exception (user-authorized
 2026-09-23).** It is a scenario, not a rule: a skirmish session with a
@@ -71,7 +75,8 @@ commanderless attacker slot and a wave director that creates units through
 the ordinary allocator and gives them ordinary orders. The survivors share
 sight, radar and income as one side. It adds no seam, runs in every mode, and
 exists only in a Survival session, so no other session or fingerprint lock
-changes. Survival battles cannot be saved. It is owned by
+changes. A Survival battle saves with its wave director in the save's
+sidecar (user-authorized 2026-10-21). It is owned by
 [DESIGN_SURVIVAL](docs/DESIGN_SURVIVAL.md).
 
 **The Modern AI computer player is the third mode-independent exception
@@ -181,6 +186,7 @@ Current policies: [terrain admission](docs/DESIGN_WEAPONS_PROJECTILES.md#231-mod
 [factory-exit yielding](docs/DESIGN_ECONOMY_CONSTRUCTION.md#modern-factory-exit-yielding), and
 [construction-site clearance](docs/DESIGN_ECONOMY_CONSTRUCTION.md#modern-construction-site-yielding), and
 [authored build membership](docs/DESIGN_ECONOMY_CONSTRUCTION.md#modern-authored-build-membership), and
+[feature growth](docs/DESIGN_ECONOMY_CONSTRUCTION.md#modern-feature-growth) (user-authorized 2026-10-20), and
 [learned terrain](docs/DESIGN_MOVEMENT_PATH.md#modern-learned-terrain), and
 [group-order spreading](docs/DESIGN_MOVEMENT_PATH.md#modern-group-order-spreading), and
 [bounded path work](docs/DESIGN_MOVEMENT_PATH.md#modern-bounded-path-work), and
@@ -207,7 +213,14 @@ Current policies: [terrain admission](docs/DESIGN_WEAPONS_PROJECTILES.md#231-mod
 [Survival infection hunters and infector waves](docs/DESIGN_SURVIVAL.md#modern-infection-hunters),
 [infector target preference](docs/DESIGN_WEAPONS_PROJECTILES.md#modern-infector-target-preference)
 and [Modern AI infector focus](docs/DESIGN_SESSIONS_AI_SAVE.md#modern-ai-infector-focus), and
-[Modern AI restriction caps](docs/DESIGN_SESSIONS_AI_SAVE.md#modern-ai-restriction-caps).
+[Modern AI restriction caps](docs/DESIGN_SESSIONS_AI_SAVE.md#modern-ai-restriction-caps), and
+[Modern AI page products](docs/DESIGN_SESSIONS_AI_SAVE.md#modern-ai-page-products), and
+[Modern AI walls](docs/DESIGN_SESSIONS_AI_SAVE.md#modern-ai-walls) (user-authorized 2026-10-20), and
+[Modern AI profile bans](docs/DESIGN_SESSIONS_AI_SAVE.md#modern-ai-profile-bans), and
+[chosen start positions](docs/DESIGN_SESSIONS_AI_SAVE.md#modern-chosen-start-positions),
+[extra start positions](docs/DESIGN_SESSIONS_AI_SAVE.md#modern-extra-start-positions) and
+[allied sight](docs/DESIGN_SESSIONS_AI_SAVE.md#modern-allied-sight) (user-authorized
+2026-10-18; Strict 3.1 keeps retail's placement, refusal and sight).
 Retired from Modern by its traffic policy, and kept only as the pathfinding
 laboratory's baseline (`movement.OverlapRules`): re-route staggering, allied
 pass-through, jam release and pocket release. Do not restore them as parity

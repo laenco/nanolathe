@@ -78,7 +78,8 @@ func mapLibraryLayoutSupported(layout vfs.Layout) bool {
 }
 
 // Keep the authored map preview and navigation. Put discovery above the
-// minimap, using its layout instead of the Load button position.
+// minimap, using its layout instead of the Load button position, with the
+// map generator's Generate beside it (docs/DESIGN_MAP_GENERATOR.md §10).
 func installGetMapsButton(w *gui.Window) {
 	if runtime.GOOS == "js" || w == nil {
 		return
@@ -95,7 +96,15 @@ func installGetMapsButton(w *gui.Window) {
 	}
 	r := w.Gadgets[preview].Rect
 	b.Rect.X, b.Rect.Y = r.X+(r.W-b.Rect.W)/2, r.Y-b.Rect.H-8
-	w.Gadgets = append(w.Gadgets, b)
+	gen := b
+	gen.Name, gen.SourceName, gen.Text = "GENMAP", "GENMAP", "Generate"
+	if pair := 2*b.Rect.W + 8; pair <= r.W {
+		b.Rect.X = r.X + (r.W-pair)/2
+		gen.Rect.X = b.Rect.X + b.Rect.W + 8
+	} else {
+		gen.Rect.Y = b.Rect.Y - b.Rect.H - 6
+	}
+	w.Gadgets = append(w.Gadgets, b, gen)
 }
 
 type mapsFetch struct {
@@ -644,6 +653,9 @@ func (g *gameShell) refreshMapLibraryExcluding(exclude string) error {
 	if nlScreenInst != nil {
 		nlScreenInst.releasePreview(true)
 	}
+	// The map generator reads the old set too; its work stops and joins
+	// before that set closes.
+	closeMapGenerator()
 	g.releaseAudio()
 	g.audioOwner, g.frontendAliasesBound = nil, false
 	g.cs = fresh

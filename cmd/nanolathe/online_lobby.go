@@ -250,6 +250,9 @@ func buildOnlineLobbyWindow(window *gui.Window) {
 		b.Rect.X, b.Rect.Y = int32(x0+col*pitch), buttonY
 		added = append(added, label(c.labelName, c.caption, int32(x0+col*pitch), labelY, 117), b)
 	}
+	// A skirmish room's Allied Sight takes the Air Waves slot, which only a
+	// Survival room shows.
+	added = append(added, alliedSightGadgets(window, x0)...)
 	rules := button(lobbyRules, gameplayLabel(gameplay.Modern), x0+2*pitch, buttonY)
 	added = append(added, label(lobbyRulesLabel, "Rules", x0+2*pitch, labelY, 117), rules)
 	added = append(added,
@@ -679,7 +682,7 @@ func (g *gameShell) refreshOnlineHumanRow(row, seatIndex int, teams []uint8) {
 	case own && r.lobbyEditable():
 		p.SetHelp("Side"+suffix, "Click to choose your side.")
 		p.SetHelp("Color"+suffix, "Click to choose your colour; right-click to step back.")
-		p.SetHelp("Allies"+suffix, "Click to choose your team. Teammates are allies and share sight.")
+		p.SetHelp("Allies"+suffix, "Click to choose your team. Teammates are allies; Allied Sight says whether they share sight.")
 	case own:
 		p.SetHelp("Side"+suffix, "Choose Not ready to change your side.")
 		p.SetHelp("Color"+suffix, "Choose Not ready to change your colour.")
@@ -762,7 +765,7 @@ func (g *gameShell) refreshOnlineComputerRow(row, k int, color uint8, teams []ui
 	p.SetActive("Metal"+suffix, false)
 	p.SetText("Energy"+suffix, "")
 	p.SetActive(lobbyLevel+suffix, true)
-	p.SetText(lobbyLevel+suffix, onlineDifficultyName(c.Difficulty))
+	p.SetText(lobbyLevel+suffix, onlineDifficultyName(session.DifficultyTier(r.baseReq.Community, int(c.Difficulty))))
 	switch {
 	case r.isHost() && r.lobbyEditable():
 		if c.Kind == ai.ControllerModern {
@@ -812,9 +815,10 @@ func (g *gameShell) refreshOnlineAddRow(row int) {
 	}
 }
 
-// onlineDifficultyName is a computer's difficulty in the setup screen's words.
-func onlineDifficultyName(difficulty uint8) string {
-	return gameOptionsDifficulty[min(int(difficulty), len(gameOptionsDifficulty)-1)]
+// onlineDifficultyName is a difficulty tier (session.DifficultyTier) in the
+// setup screen's words.
+func onlineDifficultyName(tier int) string {
+	return gameOptionsDifficulty[min(max(tier, 0), len(gameOptionsDifficulty)-1)]
 }
 
 // refreshOnlineLobbySettings writes the host's settings with the setup
@@ -828,6 +832,12 @@ func (g *gameShell) refreshOnlineLobbySettings(host bool) {
 	for _, name := range []string{survivalAirButton, survivalSeaButton, lobbyAirLabel, lobbySeaLabel} {
 		p.SetActive(name, set.survival)
 	}
+	// Strict 3.1 rooms keep every team's shared sight (SeatRules).
+	offered := !set.survival && onlineSeatRules(set.rules).AlliedSightChoice()
+	p.SetActive(alliedSightButton, offered)
+	p.SetActive(alliedSightLabel, offered)
+	p.SetStageAt(p.Index(alliedSightButton), boolInt(!set.separateSight))
+	p.SetHelp(alliedSightButton, alliedSightHelp(!set.separateSight))
 	p.SetText(lobbyLocLabel, "Location")
 	if set.survival {
 		p.SetText(lobbyLocLabel, "Wave Pace")
@@ -868,7 +878,7 @@ func (g *gameShell) refreshOnlineLobbySettings(host bool) {
 	p.SetStageAt(p.Index(survivalPaceButton), clampMenuStage(int(set.pace), 3))
 	p.SetStageAt(p.Index(survivalAirButton), boolInt(set.noAir))
 	p.SetStageAt(p.Index(survivalSeaButton), boolInt(set.noNaval))
-	for _, name := range []string{lobbyGameType, "StartLocation", "CommanderDeath", "Mapping", "LineOfSight", survivalPaceButton, survivalAirButton, survivalSeaButton, "SelectMap"} {
+	for _, name := range []string{lobbyGameType, "StartLocation", "CommanderDeath", "Mapping", "LineOfSight", survivalPaceButton, survivalAirButton, survivalSeaButton, alliedSightButton, "SelectMap"} {
 		retailGreyGadget(p.Window, name, !host)
 	}
 }
@@ -1049,6 +1059,11 @@ func (g *gameShell) activateOnlineLobbyGadget(name string) bool {
 		set.noAir = !set.noAir
 	case survivalSeaButton:
 		set.noNaval = !set.noNaval
+	case alliedSightButton:
+		if !onlineSeatRules(set.rules).AlliedSightChoice() {
+			return true
+		}
+		set.separateSight = !set.separateSight
 	case lobbyRules:
 		lowest := onlineLowestRulesStage(g.cs)
 		if set.rules = onlineNextRules(set.rules, 1, lowest); set.rules == r.settings.rules {
@@ -1330,7 +1345,7 @@ func (g *gameShell) openOnlineMapPicker() {
 		return
 	}
 	r.choosingMap = true
-	g.setup.MapName = r.settings.mapName
+	g.setSetupMap(r.settings.mapName)
 	g.syncMapIndex()
 	g.mapReturn = modeMenuSkirmish
 	g.openMenu(modeMenuMap)

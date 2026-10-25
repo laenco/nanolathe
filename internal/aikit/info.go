@@ -1,6 +1,7 @@
 package aikit
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -101,6 +102,9 @@ type UnitInfo struct {
 	// Obs.Capped), 0 when the table does not cap it. Only BuildTable sets
 	// it, so an info a test builds by hand is never capped.
 	capSlot int32
+	// banned marks an economy producer the content forbids to computer
+	// players; no build list holds it (Table.banForbidden).
+	banned bool
 }
 
 // EnergyPerMetal is the exchange rate used for Value. It is a planning
@@ -184,6 +188,18 @@ func BuildTable(cat *content.Catalog, rules construction.Rules) *Table {
 				info.Builds = append(info.Builds, p)
 			}
 		}
+		// A product the builder's own build pages install is one a human
+		// builds with the same unit whatever CANBUILD says [07 §9]; Switeck's
+		// bugfix pages offer CORE's radar tower to a construction vehicle
+		// whose list omits it (DESIGN_SESSIONS_AI_SAVE "Modern AI page
+		// products").
+		if menu != nil {
+			for _, product := range menu.InstalledProducts {
+				if p := t.byKey[content.CanonicalKey(product)]; p != nil && !slices.Contains(info.Builds, p) {
+					info.Builds = append(info.Builds, p)
+				}
+			}
+		}
 		classifyBuilder(info)
 		// Factories, towers and the like author a little storage; they are
 		// not storage buildings.
@@ -191,6 +207,7 @@ func BuildTable(cat *content.Catalog, rules construction.Rules) *Table {
 			info.Role &^= RoleStorage
 		}
 	}
+	t.banForbidden(cat)
 	t.classifyModules()
 	t.computeAntiAir()
 	t.armDamageTableAntiAir()

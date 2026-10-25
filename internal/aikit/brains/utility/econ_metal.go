@@ -120,7 +120,7 @@ func (s *shared) outOfPlan(b *core.Board, x, z int32) bool {
 	if !s.mt.far {
 		return false
 	}
-	r := int64(s.p.ComRadius)
+	r := s.comLeash()
 	return aikit.Dist2(x, z, b.HomeX, b.HomeZ) > r*r
 }
 

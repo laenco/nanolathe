@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"time"
 
 	"github.com/nanolathe-gg/nanolathe/vfs"
 )
@@ -118,4 +119,30 @@ func (a *Service) ServiceMusic() error {
 	err := c.mediaError
 	c.mediaError = nil
 	return err
+}
+
+// MusicServiceDelay bounds the next host-only poll while a paused window is
+// resting. Track completion needs polling; fade/delay timers keep their own
+// earlier deadline. This never advances music or a simulation clock [I6].
+func (a *Service) MusicServiceDelay() time.Duration {
+	if a == nil || a.Music == nil {
+		return 0
+	}
+	c := a.Music
+	delay := time.Duration(0)
+	if a.musicStartPending || c.player != nil {
+		delay = time.Second
+	}
+	for _, timer := range c.timers {
+		if timer.period < 0 {
+			continue
+		}
+		// Music timers use the scaled 30-Hz presentation clock
+		// [01 R-PLAT-02 §4]. Round up to avoid polling before the deadline.
+		next := (time.Duration(max(1, timer.remaining))*time.Second + 29) / 30
+		if delay == 0 || next < delay {
+			delay = next
+		}
+	}
+	return delay
 }

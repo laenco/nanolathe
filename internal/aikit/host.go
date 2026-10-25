@@ -194,9 +194,14 @@ const Uncapped int32 = math.MaxInt32
 // this think (docs/DESIGN_SESSIONS_AI_SAVE.md "Modern AI restriction caps"):
 // for a capped definition, its cap less its records, less its own requests
 // that have no record yet — those already queued (Obs.Capped) and those this
-// think has emitted — and Uncapped for any other. A layer offers a product as
-// a candidate only while this is positive. It reads only the observation.
+// think has emitted — and Uncapped for any other. It is 0 for an economy
+// producer the content forbids to computer players, which no build list
+// holds ("Modern AI profile bans"). A layer offers a product as a candidate
+// only while this is positive. It reads only the observation.
 func (k *Kit) Allowance(product *UnitInfo) int32 {
+	if product != nil && product.banned {
+		return 0
+	}
 	if k == nil || product == nil || product.capSlot <= 0 || k.obs == nil || int(product.capSlot) > len(k.obs.Capped) {
 		return Uncapped
 	}
@@ -229,7 +234,11 @@ func (k *Kit) push(c Command, actors []pool.Handle) {
 	// past it is not emitted and a factory request queues only what is left,
 	// so a layer that did not check the allowance cannot ask for a creation
 	// the allocator would refuse (docs/DESIGN_SESSIONS_AI_SAVE.md "Modern AI
-	// restriction caps").
+	// restriction caps"). A product the content forbids to computer players
+	// is never requested ("Modern AI profile bans").
+	if c.Product != nil && c.Product.banned && capRequest(&c) > 0 {
+		return
+	}
 	var want, left int32
 	if c.Product != nil && c.Product.capSlot > 0 {
 		if want = capRequest(&c); want > 0 {

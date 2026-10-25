@@ -578,3 +578,48 @@ The target-observer walk, the damage-key fold, the piece lanes and the
 placement validator remove allocation; their CPU change is inside the
 profiles' noise. Over the whole simulation thread the profiled branch ran
 4.8% fewer cycles than the closer of the two base profiles.
+
+## Modern feature growth (2026-10-20)
+
+The Modern policy in [DESIGN_ECONOMY_CONSTRUCTION](DESIGN_ECONOMY_CONSTRUCTION.md#modern-feature-growth)
+removes the retail arena's 2,048-record admission cutoff. The feature map and
+records still allocate on demand. These focused fixtures measure ordinary 3D
+placement, one settling visit, and the resulting dormant field; they refuse a
+truncated workload rather than timing the old cutoff:
+
+```sh
+GOMAXPROCS=2 GOFLAGS=-trimpath tools/host-run go test -p 1 \
+  ./internal/features ./internal/session -run '^$' \
+  -bench '(BenchmarkFeatureWrecks|BenchmarkPublishWreckHeavyFeatures)$' \
+  -benchtime=300ms -count=3
+```
+
+Apple M3 Pro, Go 1.27.1, two runtime workers; median of three samples:
+
+| Workload | Settled lifecycle | Warm spatial query | Replace and settle one wreck | Publish the field |
+| --- | ---: | ---: | ---: | ---: |
+| Before, 2,048 wrecks | 5.44 ns | 1.32 µs | 195 ns | 10.4 µs |
+| Modern, 2,048 wrecks | 6.85 ns | 1.76 µs | 207 ns | 12.0 µs |
+| Modern, 8,192 wrecks | 5.60 ns | 2.54 µs | 209 ns | 60.3 µs |
+| Modern, 32,768 wrecks | 7.25 ns | 2.59 µs | 181 ns | 213 µs |
+
+Lifecycle, warmed spatial queries and warmed publication allocate zero bytes
+per operation at every size. Replacement retains the baseline's two allocations
+and 200 bytes per operation. Publication still reads the larger field; dormancy
+keeps lifecycle work independent of its resting count. The local query's hit
+count grows between the first two sizes because the field fills additional
+rows, then stays fixed. These are measurements on a shared host, with visible
+timing variance, not timing assertions or a claimed speed improvement.
+
+The matching full displayless battle comparison used scene 1, seed 7, 1,200
+warm-up and 3,000 measured ticks. Before and after retained identical scene
+metadata, catalog hash, opening/warm/final partial fingerprints, all census
+rows, 51,773 simulation draws and 3,032,230 CRT draws. The window began with
+747 units, 6,211 features and 10 burning features; it ended with 590 units,
+6,331 features, 7 burning features and 232 cumulative deaths. Process CPU was
+5.87 ms/tick before and 4.94 ms/tick after; allocation was approximately
+51.4 kB/tick in both. Host contention affected wall time substantially, so this
+comparison establishes the matched ordinary battle workload and allocation
+cost without attributing the time difference to the change. The standard
+battle stays below the old live-record cap; the focused fixtures above supply
+the expanded-wreck workload.

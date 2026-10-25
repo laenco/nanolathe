@@ -12,6 +12,8 @@
 package tactics
 
 import (
+	"cmp"
+	"slices"
 	"strconv"
 
 	"github.com/nanolathe-gg/nanolathe/internal/aikit"
@@ -119,6 +121,22 @@ type squad struct {
 	// soft: the main squad is out on a raid the hold allowed (a soft raid
 	// or a probe) and turns back like a raider (harass.go).
 	soft bool
+	// Walls (walls.go): stuck holds the members left out of the squad as
+	// stuck this think; nearSince is when the members at a wall stopped
+	// gaining ground, with the front's distance to the target then (nearD);
+	// walled marks a squad held there, since when, the strength it had then
+	// and the last think it was still held; wallX, wallZ is the piece it
+	// breaks (wallPiece), watched from tick wallAt; breachLast is when the
+	// squad was walled or a piece last fell, and fellX, fellZ that piece.
+	stuck               []int32
+	nearSince           uint32
+	nearD               int32
+	walled, wallPiece   bool
+	wallSince, wallSeen uint32
+	wallAt, breachLast  uint32
+	wallStr             int64
+	wallX, wallZ        int32
+	fellX, fellZ        int32
 }
 
 // Retreat reasons (Explain).
@@ -127,9 +145,10 @@ const (
 	whyRatio
 	whySpent
 	whyBlind
+	whyWall
 )
 
-var whyNames = [...]string{"", "ratio", "spent", "blind"}
+var whyNames = [...]string{"", "ratio", "spent", "blind", "wall"}
 
 // Order kinds recorded per unit.
 const (
@@ -137,6 +156,8 @@ const (
 	okMove
 	okPatrol
 	okAttack
+	okBreach // attack the ground at a wall piece (walls.go)
+	okHold   // wait out of fire behind a breach (walls.go)
 )
 
 // unitMem is the policy's per-unit memory, indexed by handle and reset
@@ -259,6 +280,14 @@ type Params struct {
 	// the raid squad splits off (raidv=; it folds back below 60 % of it).
 	SoftMargin int64
 	RaidOn     int64
+	// Warn calls the main army and the home guard back when an enemy force
+	// closes on home that what stands there cannot hold (picture.go,
+	// findApproach; warn=0 restores the army that answers only incidents
+	// at its assets).
+	Warn bool
+	// Walls lets an engaged ground squad held at wall pieces break through
+	// them (walls.go; walls=0 restores the squad that stands at the wall).
+	Walls bool
 	// Temper, when set, gives the army a per-game character once, at
 	// Init: the strategy's drawn personality (posture.go). ParamsFrom
 	// leaves it nil, which is no temper.
@@ -269,7 +298,7 @@ type Params struct {
 func DefaultParams() Params {
 	return Params{Route: true, Micro: true, Raid: true, Defend: true, Escort: true, Budget: true, Air: true, Naval: true,
 		Posture: true, AggrSlope: defaultAggrSlope, Passage: true, Unseen: true,
-		Harass: true, HarassUnits: harassUnits, HarassValue: harassValue, Probe: true, Tour: true}
+		Harass: true, HarassUnits: harassUnits, HarassValue: harassValue, Probe: true, Tour: true, Warn: true, Walls: true}
 }
 
 // ParamsFrom reads ablation switches from player-spec parameters.
@@ -290,6 +319,8 @@ func ParamsFrom(kv map[string]string) Params {
 	p.Harass = !off("harass")
 	p.Probe = !off("probe")
 	p.Tour = !off("tour")
+	p.Warn = !off("warn")
+	p.Walls = !off("walls")
 	if v, err := strconv.Atoi(kv["hn"]); err == nil && v > 0 {
 		p.HarassUnits = int32(v)
 	}
@@ -335,6 +366,10 @@ type Army struct {
 	zones        []zone
 	candidates   []int32
 	incidents    []incident
+	// approach is the enemy force closing on home this think (findApproach),
+	// valid while approachOn.
+	approach   incident
+	approachOn bool
 	// This think's armed ground enemies (memindex.go): static defenses and
 	// radar blips as lists, remembered mobiles bucketed by zone.
 	memStat, blips []int32
@@ -395,11 +430,15 @@ type Army struct {
 
 	stuckN int32 // members standing still far from their orders
 
+	enemyWalls []aikit.Wall // this think's listed wall pieces that are not ours (walls.go)
+
 	stats struct {
 		launched, engaged, skirmish, retreatFight, retreatEarly, cleared, defended, withdrawn, focus int64
 		intercepts, strikes, strikeKills, strikeAborts                                               int64
 		passage                                                                                      int64 // waiting points moved out of a passage
 		waits, waitPassage                                                                           int64 // thinks the main squad waited gathered, in a passage
+		warned                                                                                       int64 // thinks the main squad was called home by an approaching force
+		walled, breached, breachOrders                                                               int64 // squads held at walls, pieces fallen, fire orders at pieces (walls.go)
 	}
 	// Main-squad offensives and the posture's hold (Report and Explain
 	// instrumentation; never read by a decision).
@@ -491,6 +530,7 @@ type Army struct {
 	tmp       []int32
 	tmp2      []int32
 	tmp3      []int32
+	recruit   []int32 // recruitHomeGuard scratch
 	order     [numSq]int32
 	wpBuf     [][2]int32 // route compression (routeInto)
 	goals     []goalRec
@@ -708,7 +748,12 @@ func (a *Army) activate(b *core.Board) {
 		rOn, rOff = a.P.RaidOn, a.P.RaidOn*raidOffValue/raidOnValue
 	}
 	on(sqRaid, a.P.Raid && att >= 2, rOn, rOff)
-	on(sqDefend, a.P.Defend && att >= 3 && a.threatMemory > 0, defendOnValue, defendOffValue)
+	// A standing home guard exists before the first incident. The old
+	// squad activated only after the threat memory became nonzero, so a
+	// long-game ally could send every unit on an offensive and leave its
+	// base to static towers until an enemy raid had already landed.
+	standingGuard := b.Tick >= standingGuardFrom
+	on(sqDefend, a.defendSquadAllowed(att, a.threatMemory, standingGuard), defendOnValue, defendOffValue)
 	// With the air forces on, anti-air keeps escorting for a while after
 	// enemy aircraft were last seen (the host forgets mobiles after a
 	// minute; bombers come back).
@@ -720,6 +765,16 @@ func (a *Army) activate(b *core.Board) {
 	on(sqStrike, a.P.Air, 0, 0)
 	on(sqNaval, a.P.Naval, 0, 0)
 	on(sqAmph, a.landCut(b), 0, 0)
+}
+
+// defendSquadAllowed reports whether the home guard may activate: an
+// incident at Attention 3 or more, or the standing guard after minute 20
+// even at Easy's Attention 1 and Medium's 2.
+func (a *Army) defendSquadAllowed(attention int32, threat int64, standing bool) bool {
+	if !a.P.Defend {
+		return false
+	}
+	return standing || (attention >= 3 && threat > 0)
 }
 
 // threatTicks is the time constant of the threat memory's fade.
@@ -746,6 +801,12 @@ const (
 	raidOffValue   = 900
 	defendOnValue  = 800
 	defendOffValue = 500
+	// standingGuardFrom is when the home guard stops waiting for an
+	// incident, and standingGuardShare the army value it keeps at home.
+	// Both are Nanolathe Modern policy: a long team skirmish needs a
+	// reaction force even before the first raid.
+	standingGuardFrom  = 20 * 1800
+	standingGuardShare = 10
 )
 
 func isAAUnit(info *aikit.UnitInfo) bool {
@@ -772,6 +833,7 @@ func (a *Army) membership(b *core.Board) {
 	for id := range a.sq {
 		s := &a.sq[id]
 		s.members = s.members[:0]
+		s.stuck = s.stuck[:0]
 		s.total = force{}
 		s.surf = force{}
 		s.ngroups = 0
@@ -781,6 +843,10 @@ func (a *Army) membership(b *core.Board) {
 	a.tmp3 = a.tmp3[:0] // withdrawn aircraft and ships going to their own rally
 	a.stuckN = 0
 	defendNeed := a.defendNeed(b)
+	// A standing guard may be activated after the main squad is already
+	// full: fill it from units at hand rather than wait for new ones, which
+	// could leave it active and empty while the whole army attacks.
+	a.recruitHomeGuard(b, defendNeed)
 	for _, i := range b.Combat {
 		u := &o.Own[i]
 		info := u.Info
@@ -841,6 +907,7 @@ func (a *Army) membership(b *core.Board) {
 		// squad until it moves again.
 		if a.stuck(b, u, um) {
 			a.stuckN++
+			a.sq[tag].stuck = append(a.sq[tag].stuck, i)
 			continue
 		}
 		s := &a.sq[tag]
@@ -886,6 +953,55 @@ func (a *Army) membership(b *core.Board) {
 	}
 }
 
+// recruitHomeGuard re-tags main and raid squad members into an active
+// home guard that is short of its needed value, nearest home first, so the
+// guard is filled by units already at hand rather than called back from an
+// offensive. It runs before membership places units by tag, so each squad's
+// force total counts every unit once.
+func (a *Army) recruitHomeGuard(b *core.Board, need int64) {
+	if !a.sq[sqDefend].active || need <= 0 {
+		return
+	}
+	o := b.O
+	have := int64(0)
+	a.recruit = a.recruit[:0]
+	for _, i := range b.Combat {
+		u := &o.Own[i]
+		if u.Info == nil {
+			continue
+		}
+		switch u.Tag {
+		case sqDefend:
+			have += int64(u.Info.Value)
+		case sqMain, sqRaid:
+			a.recruit = append(a.recruit, i)
+		}
+	}
+	if have >= need {
+		return
+	}
+	slices.SortFunc(a.recruit, func(x, y int32) int {
+		ux, uy := &o.Own[x], &o.Own[y]
+		dx := aikit.Dist2(ux.X, ux.Z, b.HomeX, b.HomeZ)
+		dy := aikit.Dist2(uy.X, uy.Z, b.HomeX, b.HomeZ)
+		if c := cmp.Compare(dx, dy); c != 0 {
+			return c
+		}
+		return cmp.Compare(x, y)
+	})
+	for _, i := range a.recruit {
+		if have >= need {
+			break
+		}
+		u := &o.Own[i]
+		u.Tag = sqDefend
+		if b.K != nil {
+			b.K.SetTag(u.H, sqDefend)
+		}
+		have += int64(u.Info.Value)
+	}
+}
+
 // withdrawPoint is where a damaged unit goes: aircraft to the air rally
 // and ships to the fleet's gather point when those forces are on (own is
 // then true), everything else home.
@@ -902,10 +1018,15 @@ func (a *Army) withdrawPoint(b *core.Board, info *aikit.UnitInfo) (int32, int32,
 	return b.HomeX, b.HomeZ, false
 }
 
-// defendNeed sizes the home guard: the recent threat, bounded by a share
-// of the army.
+// defendNeed sizes the home guard: the recent threat, or the standing
+// share once the battle is long, bounded by the defendShare maximum.
 func (a *Army) defendNeed(b *core.Board) int64 {
 	need := a.threatMemory
+	if b.Tick >= standingGuardFrom {
+		if floor := int64(b.ArmyValue) * standingGuardShare / 100; floor > need {
+			need = floor
+		}
+	}
 	if limit := int64(b.ArmyValue) * defendShare / 100; need > limit {
 		need = limit
 	}
@@ -1193,6 +1314,7 @@ func (a *Army) assignDefense(b *core.Board) {
 			in.taken = int8(id)
 		}
 	}
+	a.answerApproach(b)
 	for id := int32(1); id < numSq; id++ {
 		s := &a.sq[id]
 		if id == sqFighter || id == sqStrike {
@@ -1204,6 +1326,74 @@ func (a *Army) assignDefense(b *core.Board) {
 		}
 	}
 }
+
+// approachHold is the ratio, permille, at which what stands at home is
+// trusted to hold an approaching force without the main army: the share
+// at which an incident needs no further responders.
+const approachHold = 1500
+
+// answerApproach calls the home guard and the main army to a point between
+// home and an approaching enemy force (findApproach) that the towers, the
+// commander and the home guard cannot hold by themselves. A squad already
+// answering an incident this think keeps it, and the main army keeps a
+// fight it is having with that force; a main army no more than approachAway
+// farther from home than the force is not away, and is left to meet it.
+// The point is a third of the way out, inside the base's towers, so the
+// army meets the attack with their support rather than marching out to it
+// alone.
+func (a *Army) answerApproach(b *core.Board) {
+	if !a.approachOn {
+		return
+	}
+	in := &a.approach
+	px := b.HomeX + (in.x-b.HomeX)/3
+	pz := b.HomeZ + (in.z-b.HomeZ)/3
+	have := a.supportAt(b, px, pz)
+	if g := &a.sq[sqDefend]; g.active {
+		have.merge(&g.total)
+	}
+	if have.dps > 0 && ratio(&have, &in.enemy) >= approachHold {
+		return
+	}
+	for _, id := range [...]int32{sqDefend, sqMain} {
+		s := &a.sq[id]
+		if !s.active || len(s.members) == 0 {
+			continue
+		}
+		if s.state == stDefend && s.lastIncident == b.Tick {
+			continue // answering an incident at an asset
+		}
+		if s.state == stEngage && aikit.Dist2(s.tx, s.tz, in.x, in.z) <= approachFight*approachFight {
+			continue // already fighting the approaching force
+		}
+		if id == sqMain && aikit.Dist(s.cx, s.cz, b.HomeX, b.HomeZ) <= aikit.Dist(in.x, in.z, b.HomeX, b.HomeZ)+approachAway {
+			continue // already as near home as the force: not away
+		}
+		if a.P.Naval && !a.reachable(b, s, px, pz) {
+			continue
+		}
+		if s.state != stDefend {
+			a.setState(b, s, stDefend)
+		}
+		s.defX, s.defZ = px, pz
+		s.lastIncident = b.Tick
+		s.enemy = in.enemy
+		in.taken = int8(id)
+		if id == sqMain {
+			a.stats.warned++
+		}
+	}
+}
+
+// approachAway is how much farther from home than the approaching force
+// the main army must be to be called back: an army already between home
+// and the force is where it should be, and recalling it would pin it at
+// home while an enemy army waits nearby.
+const approachAway = 600
+
+// approachFight is how near a squad's engagement must be to the
+// approaching force's centre to count as fighting it.
+const approachFight = 1200
 
 // ---------------------------------------------------------------------------
 // Action budget.
@@ -1307,6 +1497,9 @@ func (a *Army) needs(b *core.Board, i int32, kind uint8, x, z int32, t pool.Hand
 	u := &b.O.Own[i]
 	um := a.unit(u)
 	same := um.ordKind == kind && um.ordT == t && um.ordG == tg && aikit.Dist2(um.ordX, um.ordZ, x, z) <= 160*160
+	if kind == okBreach {
+		same = um.ordKind == okBreach && um.ordX == x && um.ordZ == z // pieces stand 32 wu apart
+	}
 	if !same && kind == okPatrol && um.ordKind == okAttack && aikit.Dist2(um.ordX, um.ordZ, x, z) <= 160*160 {
 		// A focus-fire attack carries this patrol queued behind it.
 		same = true
@@ -1317,7 +1510,7 @@ func (a *Army) needs(b *core.Board, i int32, kind uint8, x, z int32, t pool.Hand
 	if b.Tick < um.ordTick+b.K.Persona.Reaction+4 || u.Order != aikit.OrderIdle {
 		return false
 	}
-	if kind == okMove && aikit.Dist2(u.X, u.Z, x, z) <= 250*250 {
+	if (kind == okMove || kind == okHold) && aikit.Dist2(u.X, u.Z, x, z) <= 250*250 {
 		return false // arrived
 	}
 	if um.retries >= 2 && b.Tick < um.ordTick+600 {

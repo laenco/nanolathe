@@ -148,7 +148,10 @@ type gameShell struct {
 	// one-off --unit-limit is ever recorded as the player's choice.
 	savedUnitLimit int
 	selectedSlot   int
-	skirmishSides  int // authored SIDE count, bound once when the shell is constructed
+	// startPlacer is the skirmish screen's open Place Starts window, nil
+	// when closed (skirmish_starts.go).
+	startPlacer   *startPlacer
+	skirmishSides int // authored SIDE count, bound once when the shell is constructed
 	// retailControllers preserves the numeric Controller field that TotalA.exe
 	// puts in each Player%d row: 0=open, 1=human, 2=computer. The session
 	// package has a separate compatibility representation, so the conversion
@@ -171,6 +174,7 @@ type gameShell struct {
 	settingsWritable bool
 	windowSize       retailDisplayMode // committed host size; options edits apply on OK
 	fullscreen       bool              // Nanolathe host preference (DESIGN_PRESENTATION_CLIENT §2.1)
+	language         string            // saved interface language, empty for English (language.go)
 	scrollSpeed      int               // persisted scrollspeed [02 "Settings"] [07 §10] C2 presentation-only
 	// display is the live `DisplaymodeWidth`/`Height` pair and the `VISUALS`
 	// page's option values. The load transition reads the pair for the logical
@@ -337,6 +341,13 @@ type gameShell struct {
 
 	cam    *camera.Camera
 	battle *battleSession
+
+	// pendingQuick is a quick save or load the battle's keys asked for, and
+	// autosaveBattle and autosaveDue the periodic autosave's clock
+	// (autosave.go).
+	pendingQuick   quickAction
+	autosaveBattle *battleSession
+	autosaveDue    uint32
 }
 
 func (g *gameShell) widgetTimerAdvanced(p *ui.Panel) bool {
@@ -534,7 +545,9 @@ func runGameShell(launch, opts Options, cs *contentSet) error {
 	nlScreenInst = newNLScreen(func() *gameShell { return host.shell })
 	toolsScreenInst = &toolsScreen{}
 	defer toolsScreenInst.release()
-	options.Screen = &frontendScreens{settings: nlScreenInst, tools: toolsScreenInst}
+	mapgenScreenInst = newMapgenScreen(func() *gameShell { return host.shell })
+	defer mapgenScreenInst.release()
+	options.Screen = &frontendScreens{settings: nlScreenInst, tools: toolsScreenInst, generator: mapgenScreenInst}
 	// The map browser's preview is host content: while it is on screen the
 	// window lays out at the display's resolution and the preview draws above
 	// the scaled retail canvas, so the minimap keeps its full detail.
@@ -893,6 +906,8 @@ func (g *gameShell) openMenuWithTokenFlush(mode shellMode, flushTokens bool) {
 	if mode != modeMenuSkirmish || oldMode != modeMenuSkirmish {
 		g.skirmishKeys = ""
 	}
+	// A window change closes the Place Starts window; its points stay.
+	g.startPlacer = nil
 	if oldPanel != nil {
 		// Clear a gesture before replacing the active window. This used to sit
 		// after panel=nil and was unreachable, allowing a held press to leak
@@ -917,6 +932,10 @@ func (g *gameShell) openMenuWithTokenFlush(mode shellMode, flushTokens bool) {
 				g.installSkirmishDynamicGadgets(window)
 				if g.survivalMenu {
 					applySurvivalLayout(window)
+				} else {
+					installSkirmishPlaceStarts(window)
+					installSkirmishPlayerCount(window)
+					installSkirmishAlliedSight(window)
 				}
 			}
 			if mode == modeMenuMap {
@@ -1091,6 +1110,12 @@ func (g *gameShell) step(delta float64, cl *client.Client) {
 		g.battle.joinSimulation(cl)
 		g.battle.syncSimulationMode(cl)
 	}
+	// After the join the session may be read and the battle replaced: the
+	// close button's autosave, then quick saves and the periodic autosave.
+	if g.serviceWindowClose(cl) {
+		return
+	}
+	g.serviceSaveSlots()
 	if g.startupMoviePending {
 		g.startupMoviePending = false
 		reportRetailMessageError(g.startMovie(cl, startupMoviePath, false))

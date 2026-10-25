@@ -494,7 +494,8 @@ func (s *nlScreen) drawPresets(screen *ebiten.Image) {
 	if int(s.clock*2)%2 == 0 {
 		caret = "|"
 	}
-	st := screenkit.Style{Size: 14 * u, Top: nlCream}
+	// What the player types is drawn as typed.
+	st := screenkit.Style{Size: 14 * u, Top: nlCream, Verbatim: true}
 	if text == "" {
 		bf.Draw(screen, "Type a name", field.X+12*u, field.Y+26*u, screenkit.Style{Size: 14 * u, Top: nlDim})
 		bf.Draw(screen, caret, field.X+10*u, field.Y+26*u, st)

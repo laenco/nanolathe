@@ -790,8 +790,9 @@ func (c *Client) drawWorldPass(cur *frame.Frame, ok bool) {
 			continue
 		}
 		if d.unit != nil {
-			// Pass A is the grounded movers only. Structures and airborne
-			// units are pass B's [03 R-RAST-01 §7][04 R-MOV-01 §8].
+			// Pass A is every unit whose mode mirror is 1: grounded movers
+			// and every structure. Airborne and carried units are pass B's
+			// [03 R-RAST-01 §7][04 R-MOV-01 §8].
 			if d.unit.MoverMode == moverModeGrounded {
 				c.presentUnit(d)
 			}

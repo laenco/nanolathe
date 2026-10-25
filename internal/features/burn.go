@@ -299,7 +299,7 @@ func (s *Service) igniteAt(cx, cz int, def *content.FeatureDef) bool {
 	}
 	// Step 2: pop a free slot; an empty pool is a silent return, no broadcast.
 	// A resting anchor holds no slot, so the record this attaches needs one.
-	if s.arenaOccupants() >= FeatureAnimSlots {
+	if s.arenaOccupants() >= s.arenaLimit() {
 		return false
 	}
 	sim := s.sim()

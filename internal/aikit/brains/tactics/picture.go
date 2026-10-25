@@ -248,6 +248,18 @@ func (a *Army) buildPicture(b *core.Board) {
 			a.zoneSeen[a.zoneOf(u.X, u.Z)] = tick
 		}
 	}
+	// Allied buildings and builders in sight are assets too: a team's base
+	// under fire is an incident the army can answer even though it cannot
+	// command the ally. Own army value and strength stay own-only.
+	for i := range o.Allies {
+		u := &o.Allies[i]
+		if u.Info == nil || !u.Built {
+			continue
+		}
+		if !u.Info.Role.Has(aikit.RoleMobile) || u.Info.Role.Any(aikit.RoleBuilder|aikit.RoleCommander) {
+			a.addDisc(a.asset, u.X, u.Z, 3*aikit.SectorWorld, u.Info.Value)
+		}
+	}
 	// Units observed last think and gone now were destroyed. Only a unit
 	// observed last think can still carry that think's tick.
 	if a.seenTick != 0 {
@@ -321,6 +333,7 @@ func (a *Army) buildPicture(b *core.Board) {
 		a.candidates = append(a.candidates, int32(i))
 	}
 	a.findIncidents(b)
+	a.findApproach(b)
 }
 
 // startSeenRadius is how close an own unit must come to a start position
@@ -472,6 +485,83 @@ func (a *Army) localEnemy(b *core.Board, x, z, radius int32, out *force, stat *f
 		}
 		out.addEnemy(info, int64(info.HP), 500)
 	}
+}
+
+// The approach warning (Params.Warn) watches farther out than incidents.
+const (
+	// warnRadius is how far from home an enemy force counts as closing on
+	// it: about a minute's walk for a typical army, twice the base radius
+	// at which incidents begin.
+	warnRadius = 2400
+	// warnValue is the least force worth calling the army home for; a
+	// raiding pair is the home guard's and the towers' to handle.
+	warnValue = 600
+	// warnFresh is how long a remembered mobile still counts where it was
+	// last seen: five seconds, as fully weighted by freshness.
+	warnFresh = 150
+)
+
+// findApproach gathers, as one force with one centre, the armed enemy ground
+// units within warnRadius of home that are not yet at an asset, the base or
+// the commander (those are incidents): mobiles in sight, radar blips, and
+// mobiles seen in the last few seconds. Aircraft are the fighters' and the
+// escort's, ships the fleet's. Whether home can hold the force is
+// answerApproach's decision.
+func (a *Army) findApproach(b *core.Board) {
+	a.approachOn = false
+	if !a.P.Warn {
+		return
+	}
+	o := b.O
+	in := &a.approach
+	*in = incident{}
+	var comX, comZ int32
+	hasCom := b.Commander >= 0
+	if hasCom {
+		comX, comZ = o.Own[b.Commander].X, o.Own[b.Commander].Z
+	}
+	closing := func(x, z int32, info *aikit.UnitInfo) bool {
+		if info != nil && (info.DPS <= 0 || !info.Role.Has(aikit.RoleMobile) || info.Role.Has(aikit.RoleAir) || a.cls(info).kind == ukNaval) {
+			return false
+		}
+		if aikit.Dist2(x, z, b.HomeX, b.HomeZ) > warnRadius*warnRadius {
+			return false
+		}
+		atAsset := a.asset.At(x, z) > 0
+		atHome := aikit.Dist2(x, z, b.HomeX, b.HomeZ) < core.BaseRadius*core.BaseRadius
+		atCom := hasCom && aikit.Dist2(x, z, comX, comZ) < 800*800
+		return !atAsset && !atHome && !atCom
+	}
+	add := func(x, z int32) {
+		in.sx += int64(x)
+		in.sz += int64(z)
+		in.sw++
+	}
+	for i := range o.Enemy {
+		c := &o.Enemy[i]
+		if !closing(c.X, c.Z, c.Info) {
+			continue
+		}
+		if c.Info == nil {
+			in.enemy.addGeneric(1000)
+		} else {
+			in.enemy.addEnemy(c.Info, int64(c.Info.HP)*int64(c.HPPct)/100, 1000)
+		}
+		add(c.X, c.Z)
+	}
+	for i := range o.Memory {
+		r := &o.Memory[i]
+		if r.Building || r.Info == nil || r.LastSeen == b.Tick || b.Tick-r.LastSeen > warnFresh || !closing(r.X, r.Z, r.Info) {
+			continue
+		}
+		in.enemy.addEnemy(r.Info, int64(r.Info.HP), 1000)
+		add(r.X, r.Z)
+	}
+	if in.sw == 0 || in.enemy.value < warnValue {
+		return
+	}
+	in.x, in.z = int32(in.sx/in.sw), int32(in.sz/in.sw)
+	a.approachOn = true
 }
 
 // findIncidents groups visible armed enemies that threaten own assets

@@ -91,6 +91,13 @@ func (p *Pump) CollectCheckpointReferences(c *CheckpointContext) (added int, err
 				return added, orderCheckpointError(path+"."+edge.field, err)
 			}
 		}
+		for j := range q.patrolWork.entries {
+			n, err := addOrderCheckpointReference(&c.Units.Allocations, q.patrolWork.entries[j].unit)
+			added += n
+			if err != nil {
+				return added, orderCheckpointError(fmt.Sprintf("%s.patrolWork.entries[%d].unit", path, j), err)
+			}
+		}
 		for _, segment := range []struct {
 			field string
 			nodes []*Node
@@ -110,15 +117,20 @@ func (p *Pump) CollectCheckpointReferences(c *CheckpointContext) (added int, err
 			return added, orderCheckpointError(fmt.Sprintf("orders.nodes[%d].%s", i, field), err)
 		}
 		// Node edges follow lexical field order, including detached continuations.
-		for _, edge := range []struct {
-			field string
-			node  *Node
-		}{{"workAssignment", n.workAssignment}, {"workReturn", n.workReturn}} {
-			count, err := addOrderCheckpointReference(&c.Nodes, edge.node)
-			added += count
-			if err != nil {
-				return added, orderCheckpointError(fmt.Sprintf("orders.nodes[%d].%s", i, edge.field), err)
-			}
+		count, err := addOrderCheckpointReference(&c.Nodes, n.workAssignment)
+		added += count
+		if err != nil {
+			return added, orderCheckpointError(fmt.Sprintf("orders.nodes[%d].workAssignment", i), err)
+		}
+		count, err = addOrderCheckpointReference(&c.Units.Allocations, n.workFactory)
+		added += count
+		if err != nil {
+			return added, orderCheckpointError(fmt.Sprintf("orders.nodes[%d].workFactory", i), err)
+		}
+		count, err = addOrderCheckpointReference(&c.Nodes, n.workReturn)
+		added += count
+		if err != nil {
+			return added, orderCheckpointError(fmt.Sprintf("orders.nodes[%d].workReturn", i), err)
 		}
 	}
 	return added, nil
@@ -241,9 +253,8 @@ func (p *Pump) WriteCheckpoint(e *checkpoint.Encoder, c *CheckpointContext) erro
 		writeNodeCheckpoint(e, n, path)
 		e.Field(path + ".patrolReturn")
 		e.Bool(n.patrolReturn)
-		e.Field(path + ".patrolReturnArrived")
-		e.Bool(n.patrolReturnArrived)
 		writeOrderCheckpointReference(e, path+".workAssignment", 3, &c.Nodes, n.workAssignment)
+		writeOrderCheckpointReference(e, path+".workFactory", 1, &c.Units.Allocations, n.workFactory)
 		writeOrderCheckpointReference(e, path+".workReturn", 3, &c.Nodes, n.workReturn)
 	}
 	return e.Err()
@@ -261,7 +272,7 @@ func writeOrderCheckpointReference[T comparable](e *checkpoint.Encoder, path str
 }
 
 // Expanded Queue fields: binding, danger, firingPosition, lastPumpTick,
-// ownedHandlers, patrolWorkPaused, primary, secondary. Binding carries its
+// ownedHandlers, patrolWork, primary, secondary. Binding carries its
 // attested payload;
 // handlers retain numeric row/kind pairs; empty/all-nil storage stays absent.
 // detachedNode/detachedHasSuccessor are forbidden. diagnostics/secondaryTick
@@ -288,8 +299,7 @@ func writeQueueCheckpoint(e *checkpoint.Encoder, c *CheckpointContext, q *Queue,
 	e.Field(path + ".lastPumpTick")
 	e.U32(q.lastPumpTick)
 	q.writeCheckpointHandlers(e, c, path+".ownedHandlers")
-	e.Field(path + ".patrolWorkPaused")
-	e.Bool(q.patrolWorkPaused)
+	writePatrolWorkCheckpoint(e, c, &q.patrolWork, path+".patrolWork")
 	for _, segment := range []struct {
 		field string
 		nodes []*Node
@@ -300,6 +310,36 @@ func writeQueueCheckpoint(e *checkpoint.Encoder, c *CheckpointContext, q *Queue,
 			writeOrderCheckpointReference(e, fmt.Sprintf("%s.%s[%d]", path, segment.field, i), 3, &c.Nodes, n)
 		}
 	}
+}
+
+// Expanded patrolWorkState: a presence flag, then entries, next, scanDue.
+// The zero state, which Strict 3.1 and Community never leave, stays absent
+// behind the flag, as empty handler storage does. Present, the fixed memory
+// retains every slot in slot order, empty ones included. Entries: cx, cz,
+// handle, kind, unit (DESIGN_UNITS_ORDERS_COB "Smarter patrol — 2026-10-22").
+func writePatrolWorkCheckpoint(e *checkpoint.Encoder, c *CheckpointContext, s *patrolWorkState, path string) {
+	e.Field(path)
+	present := *s != patrolWorkState{}
+	e.Bool(present)
+	if !present {
+		return
+	}
+	for i, entry := range s.entries {
+		p := fmt.Sprintf("%s.entries[%d]", path, i)
+		e.Field(p + ".cx")
+		e.I32(entry.cx)
+		e.Field(p + ".cz")
+		e.I32(entry.cz)
+		e.Field(p + ".handle")
+		e.U32(uint32(entry.handle))
+		e.Field(p + ".kind")
+		e.U8(uint8(entry.kind))
+		writeOrderCheckpointReference(e, p+".unit", 1, &c.Units.Allocations, entry.unit)
+	}
+	e.Field(path + ".next")
+	e.U8(s.next)
+	e.Field(path + ".scanDue")
+	e.U32(s.scanDue)
 }
 
 // Expanded dangerState: anchorX, anchorY, anchorZ, anchored, contacts,
@@ -362,7 +402,7 @@ func writeDangerCheckpoint(e *checkpoint.Encoder, c *CheckpointContext, d *dange
 // Param2, Param3, PathStatus, Phase, Satisfied, StaticGate, Target,
 // automaticAttack, automaticWork, crowdedArrival, nextAutomaticTargetTick.
 // The full graph writer follows these values with patrolReturn,
-// patrolReturnArrived, workAssignment and workReturn in lexical order.
+// workAssignment, workFactory and workReturn in lexical order.
 // Synchronous value receipts retain their legacy schema without lifecycle
 // provenance or graph IDs (DESIGN_MULTIPLAYER §16.3.21).
 // RetailSubtype* is reconstructed restore/save staging. GoalSupplied and

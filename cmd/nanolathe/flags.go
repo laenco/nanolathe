@@ -50,7 +50,11 @@ type Options struct {
 	RecordReplay string
 
 	// excludedMapRoot belongs only to a prepared map-removal mount; never saved.
-	excludedMapRoot   string
+	excludedMapRoot string
+	// generatedMaps are the maps generated this run, which every mount holds
+	// from memory below everything else (docs/DESIGN_MAP_GENERATOR.md §10);
+	// never saved.
+	generatedMaps     []*generatedMap
 	Gameplay          gameplay.Mode
 	GameplaySet       bool
 	GameplayOverrides []community.Overrides
@@ -206,6 +210,7 @@ type Options struct {
 	UIScale            int         // -1 keeps the saved preference; 0 Auto, 1 or 2 fixed
 	Renderer           string      // start-up presentation executor: "classic" or "modern" (default)
 	Fullscreen         bool        // host desktop fullscreen override
+	Language           string      // --language interface language code for this run; empty uses the saved choice (language.go)
 	FullscreenSet      bool        // distinguishes an omitted flag from --fullscreen=false
 	Stats              bool        // opt-in terminal presentation statistics
 	FPS                int         // cap on presented frames per second for the modern renderer; 0 = the display's refresh rate
@@ -467,6 +472,11 @@ func parseFlags(args []string, out io.Writer) (Options, error) {
 	})
 	set.StringVar(&opts.Renderer, "renderer", settings.DefaultPresentation().Renderer, "start-up presentation renderer (omitted uses saved preference): \"classic\" (software) or \"modern\" (GPU); any other value is classic")
 	set.BoolVar(&opts.Fullscreen, "fullscreen", false, "desktop fullscreen (Alt+Enter toggles); omitted uses saved preference")
+	set.Func("language", "interface language for this run: english or ukrainian; omitted uses saved preference", func(text string) error {
+		code, err := parseLanguage(text)
+		opts.Language = code
+		return err
+	})
 	set.BoolVar(&opts.Stats, "stats", false, "print periodic presentation statistics to the terminal")
 	set.IntVar(&opts.UIScale, "ui-scale", -1, "Modern battle UI scale: 0 Auto, 1 or 2 (omitted uses the saved preference); also applies to --shot")
 	set.IntVar(&opts.FPS, "fps", settings.DefaultPresentation().FPS, "cap presented frames per second for modern (omitted uses saved preference), rounded down to a multiple of the display's refresh (0 = the display's refresh rate)")
@@ -624,12 +634,18 @@ func parseFlags(args []string, out io.Writer) (Options, error) {
 			return opts, err
 		}
 	}
+	// mainOptions expects parseFlags to print validation failures; every
+	// refusal below says why, or the run exits with a status and no reason.
+	refuse := func(err error) (Options, error) {
+		fmt.Fprintln(out, err)
+		return opts, err
+	}
 	if opts.BattleBenchmark != "" {
 		if opts.BenchmarkScene == "field" && (opts.BenchmarkArmySize < headless.SimBenchMinArmySize || opts.BenchmarkArmySize > headless.SimBenchMaxArmySize || opts.BenchmarkCapture != "" || opts.Survival || !opts.BenchmarkFactories || opts.BenchmarkScale != 1 || len(opts.ComputerAI) != 0) {
-			return opts, fmt.Errorf("nanolathe: field benchmark requires 250..1000 units per army, Classic computer players and the ordinary fixture production, without capture, Survival or coastal scaling")
+			return refuse(fmt.Errorf("nanolathe: field benchmark requires 250..1000 units per army, Classic computer players and the ordinary fixture production, without capture, Survival or coastal scaling"))
 		}
 		if opts.BenchmarkCapture != "" && (!opts.Survival || opts.Map == "") {
-			return opts, fmt.Errorf("nanolathe: capture benchmark requires --survival and --map")
+			return refuse(fmt.Errorf("nanolathe: capture benchmark requires --survival and --map"))
 		}
 		// --zoom is accepted here: the benchmark scene is the same battle at
 		// twice the pixels, and the detail view's cost is exactly what the
@@ -637,16 +653,16 @@ func parseFlags(args []string, out io.Writer) (Options, error) {
 		// is recorded in the scene metadata, so two runs are only compared
 		// when they were captured at the same one.
 		if opts.Shot != "" || opts.ShotModel != "" || opts.Headless || opts.LoadSave != "" || opts.Mission != "" || opts.CPUProfile != "" || opts.MemProfile != "" || opts.ProfileSeconds != 0 || opts.ShotRenderer != "" || opts.ShotGPUProfileFrames != 0 || (opts.BenchmarkScene != "field" && opts.BenchmarkCapture == "" && opts.ShotSize != "" && opts.ShotSize != "1920x1080") {
-			return opts, fmt.Errorf("nanolathe: battle benchmark requires a standalone 1920x1080 battle")
+			return refuse(fmt.Errorf("nanolathe: battle benchmark requires a standalone 1920x1080 battle"))
 		}
 		if opts.BenchmarkPreTicks < 0 || opts.BenchmarkPreTicks > 18000 {
-			return opts, fmt.Errorf("nanolathe: benchmark pre-ticks must be 0..18000")
+			return refuse(fmt.Errorf("nanolathe: benchmark pre-ticks must be 0..18000"))
 		}
 		if opts.BenchmarkFrames < 1 || opts.BenchmarkFrames > 100000 {
-			return opts, fmt.Errorf("nanolathe: benchmark frames must be 1..100000")
+			return refuse(fmt.Errorf("nanolathe: benchmark frames must be 1..100000"))
 		}
 		if opts.BenchmarkTPS != 30 && opts.BenchmarkTPS != 60 && opts.BenchmarkTPS != 120 {
-			return opts, fmt.Errorf("nanolathe: benchmark tps must be 30, 60 or 120")
+			return refuse(fmt.Errorf("nanolathe: benchmark tps must be 30, 60 or 120"))
 		}
 		if opts.Map == "" {
 			opts.Map = "expanded confluence"
@@ -666,39 +682,39 @@ func parseFlags(args []string, out io.Writer) (Options, error) {
 		// Without --map the trace times play started from the menus, and a
 		// session of play runs until the window closes unless told otherwise.
 		if opts.LiveTrace == "" || opts.LiveScene != "" && opts.Map == "" || opts.Mission != "" || opts.LoadSave != "" && opts.Map != "" || opts.Headless || opts.Shot != "" || opts.BattleBenchmark != "" || opts.Film != "" {
-			return opts, fmt.Errorf("nanolathe: --live-trace requires the window, from the menus (with or without --load-save) or a --map battle, and --live-scene requires --live-trace and --map")
+			return refuse(fmt.Errorf("nanolathe: --live-trace requires the window, from the menus (with or without --load-save) or a --map battle, and --live-scene requires --live-trace and --map"))
 		}
 		if opts.Map == "" && !liveSecondsSet {
 			opts.LiveSeconds = 0
 		}
 		scene, err := parseLiveScene(opts.LiveScene)
 		if err != nil {
-			return opts, err
+			return refuse(err)
 		}
 		if scene.Kind == "capture" && !opts.Survival {
-			return opts, fmt.Errorf("nanolathe: a capture live scene requires --survival and --map")
+			return refuse(fmt.Errorf("nanolathe: a capture live scene requires --survival and --map"))
 		}
 		if opts.LiveSpeed != 0 && (opts.Map == "" || opts.LiveSpeed < 1 || opts.LiveSpeed > 20) {
-			return opts, fmt.Errorf("nanolathe: --live-speed takes 1..20 and requires --live-trace and --map")
+			return refuse(fmt.Errorf("nanolathe: --live-speed takes 1..20 and requires --live-trace and --map"))
 		}
 		if opts.LiveFlight && opts.LiveExecTrace > 0 {
-			return opts, fmt.Errorf("nanolathe: --live-flight cannot be combined with --live-exec-trace")
+			return refuse(fmt.Errorf("nanolathe: --live-flight cannot be combined with --live-exec-trace"))
 		}
 		if opts.Seed < 0 && scene.Kind != "" {
 			opts.Seed = 7
 		}
 	} else if opts.LiveUnpaced {
-		return opts, fmt.Errorf("nanolathe: --live-unpaced requires --live-trace")
+		return refuse(fmt.Errorf("nanolathe: --live-unpaced requires --live-trace"))
 	}
 	if opts.BenchmarkCaptureCopies < 1 || opts.BenchmarkCaptureCopies > 4 {
-		return opts, fmt.Errorf("nanolathe: benchmark capture copies must be 1..4")
+		return refuse(fmt.Errorf("nanolathe: benchmark capture copies must be 1..4"))
 	}
 	if opts.BenchmarkCapture != "" && opts.BattleBenchmark == "" {
-		return opts, fmt.Errorf("nanolathe: --benchmark-capture requires --battle-benchmark")
+		return refuse(fmt.Errorf("nanolathe: --benchmark-capture requires --battle-benchmark"))
 	}
 	if opts.Shot != "" || opts.ShotModel != "" {
 		if err := validateShotOptions(opts); err != nil {
-			return opts, err
+			return refuse(err)
 		}
 	}
 	if err := validateReplayOptions(opts); err != nil {

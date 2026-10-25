@@ -82,6 +82,11 @@ func NewMissionWithEntryOptions(fs vfs.FSOps, cat *content.Catalog, path string,
 	if err != nil {
 		return nil, err
 	}
+	// TODO(question): schema choice takes the stored index in retail's order
+	// [08 "Schema choice"]. Whether TA: Escalation's swapped difficulty name
+	// slots also reorder it, as they reorder the AI plan and income
+	// (DifficultyTier), is Unknown (research/extensions/taesc-engine.md); a
+	// campaign case per difficulty under that executable would settle it.
 	var m *mission.Mission
 	if strings.Contains(path, ":") {
 		campaignPath, idx, parseErr := parseCampaignMissionSelector(path)
@@ -379,6 +384,15 @@ func pruneRestrictedBuildMenus(cat *content.Catalog, names []string) {
 					}
 				}
 				page.AuthoredButtons = authored
+			}
+			if page.InstalledProducts != nil {
+				installed := make([]string, 0, len(page.InstalledProducts))
+				for _, product := range page.InstalledProducts {
+					if _, ok := keep[content.CanonicalKey(product)]; ok {
+						installed = append(installed, product)
+					}
+				}
+				page.InstalledProducts = installed
 			}
 			page.Buttons = kept
 			page.BaseButtonCount = base

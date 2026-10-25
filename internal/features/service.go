@@ -179,6 +179,9 @@ const (
 
 // Service is the features runtime [PLAN_08 WU-08-6].
 type Service struct {
+	// Rules selects live-arena admission; nil preserves Strict 3.1.
+	Rules Rules
+
 	Terrain                     *world.Terrain
 	Sim                         *rng.Simulation // injected; nil means no draws, never a global fallback (DET-01) (I4)
 	Crt                         *rng.CRT        // for smoke jitter, not sim draws [05 "Feature burning"]
@@ -686,7 +689,7 @@ func (s *Service) transitionFeatureAt(cx, cz int, def *content.FeatureDef, isRec
 	// effect — the feature simply stays" [05 R-FEAT-01 §5 step 5]. That is a
 	// DROPPED death or reclaim, not a fall-through to step 3's replacement, so
 	// it reports the same "do not replace" the step-4 drop does.
-	if s.arenaOccupants() >= FeatureAnimSlots {
+	if s.arenaOccupants() >= s.arenaLimit() {
 		return true
 	}
 	// Step 5: attach the record, start the sequence at frame 0 and set the
@@ -997,8 +1000,9 @@ func (s *Service) stampFeature(cx, cz int, def *content.FeatureDef, pos *[3]nume
 			return nil
 		}
 	}
-	// The one pool that can silently refuse a placement is the live-instance
-	// arena of 2048 slots [05 R-FEAT-01 §2]; the catalog itself has no cap
+	// Strict/Community can silently refuse at the 2048-slot live-instance
+	// arena [05 R-FEAT-01 §2]; Modern grows on demand ("Modern feature growth"
+	// in DESIGN_ECONOMY_CONSTRUCTION). The catalog itself has no cap
 	// [05 R-FEAT-01 §1].
 	w := int(s.Terrain.CellW)
 	h := int(s.Terrain.CellH)
@@ -1082,7 +1086,7 @@ func (s *Service) stampFeature(cx, cz int, def *content.FeatureDef, pos *[3]nume
 	// the footprint write reproduces — retail writes the anchor inside step 4,
 	// after the pop, so a refused stamp never leaves its own ordinal behind.
 	// A sprite definition takes no slot (step 5) and is never refused here.
-	if !isSpriteDef(def) && s.arenaOccupants() >= FeatureAnimSlots {
+	if !isSpriteDef(def) && s.arenaOccupants() >= s.arenaLimit() {
 		s.clearFootprintNoRevision(cx, cz, def)
 		s.Terrain.BumpStaticObstacleRevision()
 		return nil
@@ -1540,7 +1544,7 @@ func (s *Service) PopulateFromTerrain() int {
 			// The walk CONTINUES rather than stopping: retail's loader stamps
 			// every remaining cell, and the sprite anchors after this one still
 			// need no slot.
-			if !isSpriteDef(def) && s.arenaOccupants() >= FeatureAnimSlots {
+			if !isSpriteDef(def) && s.arenaOccupants() >= s.arenaLimit() {
 				continue
 			}
 			inst := &Instance{

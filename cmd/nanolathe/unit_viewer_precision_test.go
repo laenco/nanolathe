@@ -24,7 +24,7 @@ func TestUnitViewerPivotFreezesRootLocalCreationPose(t *testing.T) {
 		{Name: "hidden child", Parent: 2, Vertices: [][3]numeric.Fixed{{f(1000), 0, 0}},
 			Primitives: []model.Primitive{{IsColored: 1, VertexIndices: []uint16{0, 0, 0}}}},
 	}}
-	states := []model.PieceState{{RotZ: 16384, Trans: [3]numeric.Fixed{f(5), f(6), f(7)}}, {}, {Hidden: true}, {}}
+	states := []model.PieceState{{RotZ: 16384, Trans: [3]numeric.Fixed{f(5), f(6), f(7)}}, {}, {Hidden: true}, {Hidden: true}}
 	before := append([]model.PieceState(nil), states...)
 	m := unitViewerModel{geometry: mdl}
 	m.fitCreatePose(states)
@@ -45,6 +45,26 @@ func TestUnitViewerPivotFreezesRootLocalCreationPose(t *testing.T) {
 				t.Fatal("animation changed the frozen pivot or fit")
 			}
 		}
+	}
+}
+
+func TestUnitViewerFitIncludesVisibleChildOfHiddenPivot(t *testing.T) {
+	f := func(n int64) numeric.Fixed { return numeric.Fixed(n << 16) }
+	mdl := &model.Model{Root: 0, Pieces: []model.Piece{
+		{Name: "root", Parent: -1},
+		{Name: "pivot", Parent: 0, Translate: [3]numeric.Fixed{f(10), 0, 0}, Vertices: [][3]numeric.Fixed{{}}},
+		{Name: "body", Parent: 1, Translate: [3]numeric.Fixed{0, f(5), 0},
+			Vertices:   [][3]numeric.Fixed{{}, {f(2), f(4), f(6)}},
+			Primitives: []model.Primitive{{IsColored: 1, VertexIndices: []uint16{0, 1, 0}}}},
+		{Name: "hidden tip", Parent: 2, Vertices: [][3]numeric.Fixed{{f(1000), 0, 0}},
+			Primitives: []model.Primitive{{IsColored: 1, VertexIndices: []uint16{0, 0, 0}}}},
+	}}
+	states := []model.PieceState{{}, {Hidden: true, Trans: [3]numeric.Fixed{f(2), 0, 0}}, {}, {Hidden: true}}
+	pivot, _, radius := unitViewerFit(mdl, states)
+	// Authored and script translations still pass through the invisible
+	// transform parent; only each piece's own visibility gates its fit.
+	if pivot != [3]numeric.Fixed{f(13), f(7), f(3)} || radius != math.Sqrt(56)/2 {
+		t.Fatalf("visible child fit: pivot=%v radius=%v", pivot, radius)
 	}
 }
 

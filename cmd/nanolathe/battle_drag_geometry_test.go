@@ -191,3 +191,148 @@ func BenchmarkDragAssignDestinations(b *testing.B) {
 		}
 	}
 }
+
+// dragNearestChainFullScan is the plain definition the grid walk must equal:
+// at every step the nearest remaining point, ties to the lower index.
+func dragNearestChainFullScan(start dragPoint, points []dragPoint) []int {
+	taken := make([]bool, len(points))
+	order := make([]int, 0, len(points))
+	from := start
+	for range points {
+		best, bestD := -1, int64(0)
+		for i, p := range points {
+			dx, dz := int64(p.x)-int64(from.x), int64(p.z)-int64(from.z)
+			if d := dx*dx + dz*dz; !taken[i] && (best < 0 || d < bestD) {
+				best, bestD = i, d
+			}
+		}
+		taken[best] = true
+		order = append(order, best)
+		from = points[best]
+	}
+	return order
+}
+
+func TestDragNearestChainWalksOutward(t *testing.T) {
+	// Publication order 300, 100, 200 along a row; a worker at 0 visits
+	// 100, 200, 300 and one at 400 visits 300, 200, 100.
+	points := []dragPoint{{300, 50}, {100, 50}, {200, 50}}
+	if got := dragNearestChain(dragPoint{0, 50}, points); !slices.Equal(got, []int{1, 2, 0}) {
+		t.Fatalf("from the west %v", got)
+	}
+	if got := dragNearestChain(dragPoint{400, 50}, points); !slices.Equal(got, []int{0, 2, 1}) {
+		t.Fatalf("from the east %v", got)
+	}
+	if got := dragNearestChain(dragPoint{}, nil); len(got) != 0 {
+		t.Fatalf("empty %v", got)
+	}
+}
+
+func TestDragNearestChainMatchesFullScan(t *testing.T) {
+	// A fixed linear congruential stream keeps the cases reproducible. Small
+	// coordinate ranges force duplicates and ties; the wide ranges widen the
+	// grid cell; starts far outside the area exercise the first full scan.
+	seed := uint32(12345)
+	next := func(n int32) int32 {
+		seed = seed*1103515245 + 12345
+		return int32((seed >> 8) % uint32(n))
+	}
+	for c, spread := range []int32{8, 300, 2000, 40000, 2000000} {
+		for trial := range 25 {
+			points := make([]dragPoint, 1+next(300))
+			for i := range points {
+				points[i] = dragPoint{next(spread) - spread/3, next(spread) - spread/2}
+			}
+			start := dragPoint{next(3*spread) - spread, next(3*spread) - spread}
+			got, want := dragNearestChain(start, points), dragNearestChainFullScan(start, points)
+			if !slices.Equal(got, want) {
+				t.Fatalf("spread %d trial %d (case %d): grid %v, full scan %v", spread, trial, c, got, want)
+			}
+		}
+	}
+}
+
+func TestDragAreaGroupsKeepTheFanOutBudget(t *testing.T) {
+	row := func(n int) []dragPoint {
+		out := make([]dragPoint, n)
+		for i := range out {
+			// Selection order deliberately differs from position order.
+			out[i] = dragPoint{int32((i * 7919) % (n * 10)), int32(i % 3)}
+		}
+		return out
+	}
+	// Room for everyone: each worker starts from where it stands.
+	groups, starts := dragAreaGroups(row(5), 100, dragAreaCommandLimit)
+	if len(groups) != 5 || !slices.Equal(starts, row(5)) {
+		t.Fatalf("five workers, 100 entries: %v from %v", groups, starts)
+	}
+	for i, g := range groups {
+		if !slices.Equal(g, []int{i}) {
+			t.Fatalf("worker %d grouped %v", i, g)
+		}
+	}
+	for _, tc := range []struct{ workers, entries int }{
+		{1, 1}, {16, 256}, {17, 10}, {40, 10}, {64, 1}, {200, 3}, {5, 1000}, {5, 3000}, {9, 4096}, {12, 9000}, {3, 0},
+	} {
+		workers := row(tc.workers)
+		groups, starts := dragAreaGroups(workers, tc.entries, dragAreaCommandLimit)
+		if len(groups) == 0 || len(groups) != len(starts) || len(groups) > dragAreaCommandLimit {
+			t.Fatalf("%+v: %d groups", tc, len(groups))
+		}
+		if total := len(groups) * tc.entries; total > max(tc.entries, dragAreaEntryBudget) {
+			t.Fatalf("%+v: %d entries sent", tc, total)
+		}
+		var seen []int
+		for g, members := range groups {
+			if len(members) == 0 || !slices.IsSorted(members) {
+				t.Fatalf("%+v: group %d is %v", tc, g, members)
+			}
+			if !slices.ContainsFunc(members, func(w int) bool { return workers[w] == starts[g] }) {
+				t.Fatalf("%+v: group %d starts outside itself", tc, g)
+			}
+			seen = append(seen, members...)
+		}
+		slices.Sort(seen)
+		for i, w := range seen {
+			if w != i {
+				t.Fatalf("%+v: workers covered %v", tc, seen)
+			}
+		}
+		// Shared runs are contiguous along the wider axis, here X; singletons
+		// keep selection order.
+		for g := 1; g < len(groups) && len(groups) < tc.workers; g++ {
+			prevMax, nextMin := int32(math.MinInt32), int32(math.MaxInt32)
+			for _, w := range groups[g-1] {
+				prevMax = max(prevMax, workers[w].x)
+			}
+			for _, w := range groups[g] {
+				nextMin = min(nextMin, workers[w].x)
+			}
+			if prevMax > nextMin {
+				t.Fatalf("%+v: groups %d and %d overlap along X", tc, g-1, g)
+			}
+		}
+	}
+	// A list longer than the budget goes as one command, as it always could.
+	if groups, _ := dragAreaGroups(row(5), 5000, dragAreaCommandLimit); len(groups) != 1 || len(groups[0]) != 5 {
+		t.Fatalf("oversized list split into %v", groups)
+	}
+	// Online the limit is one command: every worker shares the list, which
+	// walks from the middle worker along the wider axis.
+	workers := []dragPoint{{900, 0}, {100, 5}, {500, 9}, {300, 1}}
+	groups, starts = dragAreaGroups(workers, 3, 1)
+	if len(groups) != 1 || !slices.Equal(groups[0], []int{0, 1, 2, 3}) || starts[0] != (dragPoint{500, 9}) {
+		t.Fatalf("online grouping %v from %v", groups, starts)
+	}
+}
+
+func TestAreaCommandLimitIsOneOnline(t *testing.T) {
+	b := &battleSession{}
+	if got := b.areaCommandLimit(); got != dragAreaCommandLimit {
+		t.Fatalf("single-player limit %d", got)
+	}
+	b.multiplayer = &battleMultiplayer{}
+	if got := b.areaCommandLimit(); got != 1 {
+		t.Fatalf("online limit %d", got)
+	}
+}

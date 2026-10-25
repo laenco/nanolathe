@@ -353,7 +353,13 @@ func startSinglePlayerReplay(target replayTarget, request headless.FreshBattleRe
 		// so the battle start compiles no second catalog.
 		request.Catalog = sess.Catalog
 	}
-	config, err := headless.MatchConfigForFreshBattle(request, session.MatchRoomInputs{Mod: matchModOf(cs.mod), ContentProfile: cs.profile})
+	room := session.MatchRoomInputs{Mod: matchModOf(cs.mod), ContentProfile: cs.profile}
+	if sess != nil {
+		// A generated map's recipe, so the replay plays after its memory
+		// mount is gone (docs/DESIGN_MAP_GENERATOR.md §10).
+		room.GeneratedMap = cs.generatedRecipeRecord(sess.Skirmish.MapName)
+	}
+	config, err := headless.MatchConfigForFreshBattle(request, room)
 	if err != nil {
 		return nil, &replaySkip{reason: err.Error()}
 	}

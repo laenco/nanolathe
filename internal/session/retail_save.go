@@ -379,11 +379,9 @@ func (s *Session) RetailProjection(in RetailSaveInputs) (save.RetailProjection, 
 
 // WriteRetailSave projects s and writes the retail bank using the direct
 // truncate-write policy already owned by save.WriteFile [08 "File naming and
-// write policy"].
+// write policy"]. A Survival battle is saved too; its director travels in the
+// sidecar (RecordSurvival, docs/DESIGN_SURVIVAL.md §11).
 func (s *Session) WriteRetailSave(path string, in RetailSaveInputs) error {
-	if s.IsSurvival() {
-		return fmt.Errorf("nanolathe: survival battles cannot be saved: logical path %s, providers searched [session], expected a skirmish or campaign battle", path)
-	}
 	p, err := ProjectRetailSession(s, in)
 	if err != nil {
 		return err

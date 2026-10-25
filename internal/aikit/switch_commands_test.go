@@ -59,7 +59,7 @@ func TestKitSwitchAndTransportVocabulary(t *testing.T) {
 // this package) must take every command kind the executor applies, or the
 // first command of a new kind fails a checkpointed battle's history.
 func TestModernIntentKindsCoverTheVocabulary(t *testing.T) {
-	if int(CmdDecloak) != ai.ModernIntentKinds {
-		t.Fatalf("the last command kind is %d, the checkpoint vocabulary ends at %d", CmdDecloak, ai.ModernIntentKinds)
+	if int(CmdBreach) != ai.ModernIntentKinds {
+		t.Fatalf("the last command kind is %d, the checkpoint vocabulary ends at %d", CmdBreach, ai.ModernIntentKinds)
 	}
 }

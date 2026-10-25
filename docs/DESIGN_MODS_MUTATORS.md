@@ -3,7 +3,7 @@
 How a player installs, selects and switches content mods such as ProTA,
 TA Zero and TA: Escalation without command-line flags; how global
 **mutators** (build speed, cost, health, damage, blast size, sight and radar
-multipliers)
+multipliers, and the builder speed of §6.7)
 are selected and locked for a battle; how retail's multiplayer **unit
 restrictions** are offered in skirmish and Survival (§15); and how a
 Nanolathe save records all of it so that loading the save restores the same
@@ -98,6 +98,8 @@ To keep the two apart, code for this feature never uses the bare identifier
 | D20 | (2026-10-16) Nanolathe hosts Cavedog's official bonus units and maps. The units are an add-on the player enables apart from the mod slot, so any mod can still be selected beside them; the maps join the community map catalogue (§5.7). |
 | D21 | (2026-10-16) Third-party factions are add-ons the player enables in any combination beside ARM and CORE, each independent of the others and of the mod slot, never replacing another's content or identities (§5.8). |
 | D22 | (2026-10-18) Nanolathe hosts Switeck's TA Bugfix 1.7b6 as the fix add-on `switecks-bugfix`, listed under the add-on catalogue's `fixes` key. A fix add-on replaces the base patch archive and mounts after the content add-ons and before faction add-ons; it may repair the Cavedog content it replaces (§5.7). |
+| D24 | (2026-10-22) Builder speed: a mutator on its own step list (1, 2, 3, 5, 8, 20) that makes builders turn and accelerate faster, runs their build-animation script functions faster and starts a mobile build once in reach. Its factor is recorded on each builder definition and read by engine code, a further mode-independent exception the maintainer accepted for it (§6.7). |
+| D23 | (2026-10-19) Nanolathe packages the Evolva models as `evolva-models`: UH40 supplies a model whenever present, with missing filenames filled from 2004, then 2003, then 2002. Model-only add-ons mount after content and fix add-ons and before factions and the selected mod; they replace models without occupying the mod slot (§5.7). |
 
 D9–D13 were proposed in review and accepted with the rest of the design
 direction. D14 is the maintainer's layout for the screen. D13's offer was
@@ -106,7 +108,8 @@ preset once on the main menu, and the preset became the mod's full recommended
 settings (§4.3). D15 supersedes D12's content profile: a mod's config is its
 own, so no preference can apply one mod's table to another. D17–D19 are the
 user's decisions for unit restrictions, recorded in §15. D22 is the user's
-decision to host the fix add-on, recorded in §5.7.
+decision to host the fix add-on, recorded in §5.7. D24 is the user's
+decision for Builder speed, recorded in §6.7.
 
 ## 3. The match selection
 
@@ -135,7 +138,8 @@ one documented layout on every platform:
 $XDG_DATA_HOME/nanolathe/mods/      default ~/.local/share/nanolathe/mods
   <id>/<version>/                   one extracted content root, mounted as a root
     nanolathe-mod.json              the mod's metadata and Nanolathe config (§4.2)
-    install.json                    receipt: archive SHA-256, size, source URL, time
+    install.json                    receipt: archive SHA-256, size, source URL, time;
+                                    a saved generated map's recipe (DESIGN_MAP_GENERATOR §10)
   manifest.json                     last fetched catalogue, for offline display (§5.2)
   .downloads/                       <id>-<version>.zip.<sha256>.part: partial downloads
   .staging/                         extractions and removals in progress
@@ -930,7 +934,7 @@ with the reference install held none of the bonus units. Nanolathe hosts the con
 base game, apart from the mod slot, so a player can enable it and still
 select any mod.
 
-**What is hosted.** Two add-ons. `cavedog-bonus-units` version `original`
+**What is hosted.** `cavedog-bonus-units` version `original`
 holds six original archives byte for byte:
 
 | Archive | Unit | Side | Role |
@@ -995,12 +999,29 @@ this file in any way that is legal … I relenquish all ownership of this
 file"), and the maintainer authorized hosting on 2026-10-18 (D22); the
 Cavedog bytes it carries remain Cavedog's.
 
+`evolva-models` version `1` (user-authorized 2026-10-19, D23), displayed as
+**Evolva models**, is Nanolathe's compilation of the supplied Evolva model
+packs. For each case-insensitive model filename, the first available source
+in UH40, 2004, 2003, 2002 order wins; an older release fills only missing
+filenames. Selected model bytes are unchanged. The pinned inputs and their
+evidence scope are recorded in
+[Evolva model packages](../research/extensions/evolva-models.md).
+`cmd/modelpack` and `modelconfigs/evolva-models-1.json` build
+`EvolvaModels.ufo`, holding only `objects3d/*.3do`, beside identity-only
+metadata, credits and a per-file source list. The compilation contains 182
+models, including 97 unit-model filenames and 85 wreck-model filenames; ten
+unit-model names are absent from the reference install. These are supplied
+models, not added unit definitions. No scripts, unit statistics, weapons or
+textures are added, and a selected mod's own files retain precedence.
+
 **Catalogue and library.** The catalogue is
 `https://nanolathe.gg/addons/manifest.json`: schema 1, an `addons` array of
-the mod catalogue's record fields (§5.1) and a `fixes` array beside it for
-fix add-ons, each entry with a `contents`
+the mod catalogue's record fields (§5.1), including model-only add-ons,
+and a `fixes` array beside it for fix add-ons. Each entry has a `contents`
 array naming every archive it holds with its byte size and SHA-256. A build
-without fix support ignores the key, so it never offers one.
+without fix support ignores the `fixes` key. Model add-ons remain visible
+in the ordinary catalogue (user-authorized 2026-10-19); their audited payload
+selects the model layer in supporting builds.
 Archives are assets of the website repository's `addons` release, one
 `<id>-<version>.zip` per add-on holding the archives, root
 documentation and an identity-only schema-1 `nanolathe-mod.json`.
@@ -1024,7 +1045,8 @@ library, so a capture reproduces from its command line. Installing an
 add-on enables it. Enabling, disabling or installing one reloads content in
 process, as a mod switch does (§4.4). An add-on whose archives all sit
 byte-identical in the base install's folder is shown as already in the
-install, with no switch.
+install, with no switch, except a model-only add-on: its installed selection
+is required to place it above the patch, so its row keeps the switch or *Get*.
 
 **Layers and mounting.** An add-on's archives mount as if they sat in the
 base install's folder: a content archive joins its extension's tier, in the
@@ -1033,8 +1055,12 @@ that tier by file name `[02 §2]` (DESIGN_CONTENT_VFS C1); a patch-tier
 revision archive (`rev*.GP3` and the like) joins the patch tier and replaces
 the folder archive of the same name, as copying the add-on's in would. The
 add-on layers mount in one order whatever the selection says: content
-add-ons, then a fix add-on, then faction add-ons, which mount one tier above
-the patch (§5.8). The selected mod still mounts last and wins every
+add-ons, then a fix add-on, then model-only add-ons, then faction add-ons.
+A model-only add-on is identified from its archive paths: at least one file,
+with every file below `objects3d/` and ending in `.3do`; a faction declaration
+or patch-tier revision keeps its existing category. Model archives mount
+one tier above the patch, and factions two tiers above it (§5.8), both below
+the base install's loose files. The selected mod still mounts last and wins every
 path it supplies, and the map library still mounts below the base install.
 On the reference GOG Commander Pack install no hosted content archive supplies a
 logical path the base game also supplies, except Comet Catcher's map, which The Core
@@ -1044,7 +1070,9 @@ Add-ons keep apart as §5.8's isolation contract says: in layer then selection
 order, a later add-on that supplies a logical path, or defines a unit or
 feature name, an earlier one also does is left off with a notice — except
 that a fix add-on may replace the content add-ons mounted before it, because
-it repairs them. A fix add-on is also exempt from the name-at-another-path
+it repairs them. A model-only add-on may replace model paths supplied by
+earlier content and fix add-ons; two conflicting model add-ons remain
+alternatives, with the earlier selection retained. A fix add-on is also exempt from the name-at-another-path
 check against the base and the mod: it repairs the base content wholesale, so
 it may keep a definition in a differently named file, as Switeck's merged
 corpse files do.
@@ -1056,7 +1084,10 @@ a startup notice naming it, when the base or the mod defines one of its
 unit or feature names at another path, as §5.6 refuses differing same-name
 features; a fix add-on is not, because it repairs the base content
 wholesale. The Mods & Mutators screen says when the running mod leaves an
-add-on off.
+add-on off. Model-only archives follow the running content layout, like
+faction archives, so a mod that renames the model directory still reads the
+replacement models at its configured path; the mod's own files remain above
+them.
 
 **Every gameplay mode.** An add-on is content, as it is in retail's folder,
 so it applies under Strict 3.1, Community 3.9 and Modern alike. Strict 3.1
@@ -1066,13 +1097,16 @@ without them.
 **Saves, replays and online play.** The enabled add-ons are part of the
 match selection (§3). The sidecar records the add-ons mounted from the
 library (§7.2), and a load restores exactly them through the content reload;
-one the base folder holds needs no switch, and a recorded add-on this install
+one the base folder holds needs no switch, except a model-only add-on whose
+installed selection restores its model tier. A recorded add-on this install
 has nowhere refuses the load, naming it and where to get it. A replay plays
 with the add-ons its battle had: a single-player replay's header lists them
 (DESIGN_MULTIPLAYER §10, replay format version 2) and the Replays screen
 reloads onto them first, and an online replay's room content names them. An
 online room lists them as room content, and a seat that lacks one fetches it
-in the lobby (DESIGN_MULTIPLAYER §16.8).
+in the lobby (DESIGN_MULTIPLAYER §16.8). Room mounts keep each add-on's archives
+grouped to audit its layer, including folder copies, and apply the same model
+and faction tiers and active content layout as offline mounts.
 
 ### 5.8 Faction add-ons
 
@@ -1149,8 +1183,8 @@ Faction add-ons install like any add-on: from the catalogue with *Get*,
 or from a local package with `--install-addon <zip|dir>`, which, like
 `--install-mod`, installs without enabling; `--addon` or the Add-ons card
 enables it. The card names a faction row's sides and unit count. Faction
-archives mount one tier above the patch, after any fix add-on (§5.7
-"Layers and mounting"), so a fix never shadows one; the base install's loose
+archives mount two tiers above the patch, after fix and model-only add-ons (§5.7
+"Layers and mounting"), so those layers never shadow one; the base install's loose
 files and the selected mod still mount above them. Besides
 §5.7's checks against the base and the mod, the mount keeps enabled add-ons
 apart from each other — in layer then selection order, a later add-on that
@@ -1364,7 +1398,10 @@ orthogonal to the gameplay mode in the same way content profiles are (D1).
 
 A mutator is not a gameplay rule. It adds no seam, draws no random numbers,
 keeps no per-tick state and is never consulted inside a tick. The retail
-arithmetic that consumes a mutated value is unchanged in every mode. **Strict
+arithmetic that consumes a mutated value is unchanged in every mode. Builder
+speed is the one exception the maintainer accepted (D24): the factor it
+records on each builder definition is read by engine code, under the
+boundaries of §6.7. **Strict
 3.1 with no mutators is the retail baseline**; every fingerprint lock runs
 with no mutators. A variation that data cannot express, such as a
 resource-sharing or fog rule, is not a mutator. It is a Community
@@ -1377,9 +1414,12 @@ it.
 ```go
 package content
 
-// Factor is an exact rational multiplier from the fixed step list (§6.4).
+// Factor is an exact rational multiplier from its mutator's step list (§6.4).
 // The zero value is the identity.
 type Factor struct{ Num, Den uint8 }
+
+var MutatorSteps []Factor      // the shared list, 0.25 .. 4
+var BuilderSpeedSteps []Factor // Builder speed's own list, 1 .. 20
 
 // Mutators is the closed set of global multipliers one battle runs under.
 // The zero value changes nothing.
@@ -1395,7 +1435,14 @@ type Mutators struct {
 	Salvage      Factor
 	FireRate     Factor // shown as "Fire rate"
 	UnitSpeed    Factor // shown as "Unit speed"
+	BuilderSpeed Factor // shown as "Builder speed", on BuilderSpeedSteps (§6.7)
 }
+
+// MutatorInfo is one row a front end builds from: Key, Label, Group,
+// Description and the mutator's own ascending Steps.
+func MutatorCatalog() []MutatorInfo
+func (f Factor) NextIn(steps []Factor) Factor
+func (f Factor) PrevIn(steps []Factor) Factor
 
 func (m Mutators) IsZero() bool
 func (m Mutators) String() string // canonical, e.g. "buildSpeed=2,health=1.5"; "" when zero
@@ -1404,6 +1451,9 @@ func (m Mutators) Digest() string
 // ApplyMutators transforms a per-battle clone in place. Like
 // RestrictToCreatable, it is never called on a shared compiled catalog.
 func (c *Catalog) ApplyMutators(m Mutators) error
+
+// On UnitDef, written only by ApplyMutators on a builder (§6.7):
+BuilderSpeed Factor
 ```
 
 The type is closed. A new mutator is a new field, a row in §6.5 and its
@@ -1453,9 +1503,12 @@ the store domain retail gives it ([02 R-KEYS-01 §5]). For a value `v`:
   single, and NaN and `v ≤ 0` are unchanged. The one exception is Income's
   negative-`energyuse` arm (§6.5).
 - Where two mutators scale one field (Build cost and Salvage on a corpse-chain
-  feature), or one scales a field by k² (Unit speed), the field is scaled once
-  by the exact product. Every step's numerator and denominator is at most 4,
-  so a product's are at most 16; the product is never a stored factor.
+  feature, or Unit speed and Builder speed on a builder's motion), or one
+  scales a field by k² (Unit speed), the field is scaled once by the exact
+  product. Every shared step's numerator and denominator is at most 4, so
+  those products' are at most 16; with Builder speed's 20 the largest is
+  k_u²·k_b = 320. Products are formed as 64-bit integer ratios and never stored
+  as a factor, whose 8-bit numerator could not hold them.
 
 Saturating rather than wrapping is deliberate. Retail wraps an out-of-range
 *authored* integer when it stores it, and content that authors one keeps the
@@ -1466,6 +1519,9 @@ never introduces a wrap.
 `mutators/3`, the base hash and the canonical set. The tag changes whenever
 any mutator's transform changes meaning (it moved to 2 when Build speed
 switched to `buildtime`, and to 3 when Sight began extending raster inputs).
+Adding Builder speed left it at 3: no set string written before it names its
+key, and with the key absent every transform, Unit speed's included, is
+unchanged, so no earlier identity can be taken for a Builder speed one.
 
 **The step list** (initial): 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4. Each step is
 an exact rational (a whole number of quarters), and its one spelling, in the
@@ -1473,6 +1529,16 @@ UI, settings, flags, reports and the identity, is that decimal: most players
 read "1.5" more easily than "3/2". Settings, flags and sidecars refuse any
 other value or spelling. A closed list keeps the test matrix finite and every
 product exact.
+
+**Per-key step lists.** Every mutator uses the shared list except Builder
+speed, whose own closed list is 1, 2, 3, 5, 8, 20, spelled "2", "3", "5",
+"8", "20" (§6.7). Its factor multiplies script animation rates and divides
+sleeps, where only whole multiples are exact, and the maintainer wanted
+stronger steps than 4. Parsing, cycling, settings, flags, sidecars, the
+online configuration and replays use each key's own list and refuse a value
+off it, the shared steps included for Builder speed. The exactness argument
+holds: every step is still an exact rational, every product is formed once
+in 64-bit integers, and the closed lists keep the test matrix finite.
 
 ### 6.5 The mutators
 
@@ -1489,6 +1555,7 @@ product exact.
 | Salvage | feature `Metal`, `Energy` of every definition that is not `indestructible`: wrecks, heaps, rocks and trees, whether a map, a mission or a death places them. A corpse-chain feature takes Build cost × Salvage, rounded once | reclaim pays k× | Map features resolve to catalog definitions when the terrain loads, after battle entry has applied the mutators, so one transform reaches every placement. The deposit pass writes the low byte of an indestructible definition's `metal` into the extraction grid ([05 R-FEAT-01 §7]); scaling it would wrap that byte (250 × 2 is 244), so deposits are excluded. No stock indestructible definition is reclaimable. Feature reclaim counts down `trunc(15 + (energy + metal)/2)` work at a fixed rate and pays the whole pool on the removing visit ([05 R-WORK-01 §5]), so a builder earns at about the same rate for about k× as long. Repair patrol's reclaim scan ranks by value and admits a metal feature only when it fits under storage, inclusively ([05 R-FEAT-01 §6], [04 R-ORD-01 §4]), so large pools are passed over sooner when storage is nearly full. The HUD footer shows the scaled pools ([07 R-HUD-03 §3]). The computer players' discount applies to the payout ([05 R-ECO-01 §3]). Resurrection reads no pool ([05 R-WORK-01 §7]). The largest stock pool, 40,100, saturates at 65,535 from ×2. |
 | Fire rate | every weapon's `ReloadTime`, from its stored unsigned 16-bit value, scaled by the **inverse** factor as Build speed scales `buildtime` | every weapon fires k× as often | The slot fires when its countdown reaches zero ([06 §4.2]), at most once per tick per slot, so short stock reloads round unevenly at ×4 (5 ticks becomes 1). Zero stays zero and the minimum of one never creates a free round ([06 R-WPN-05 §2]). `energypershot` and `metalpershot` are billed per shot, so drain grows k-fold at the same cost per shot ([06 §4.2]). A stockpile round advances five progress per visit up to `reloadtime` and bills in proportion to progress, so nukes and anti-nukes build rounds in 1/k of the time at the same total cost, demanding k× per visit ([06 §11.1]); the stock 3,600–5,400-tick rounds (2–3 minutes) take 30–45 s at ×4. `burstrate` spaces shots within a burst on its own schedule and is untouched; a burst longer than the scaled reload overlaps the next ([06 §4.3]). The veteran reload is an integer percentage of `reloadtime`, so the bonus flattens at the smallest reloads ([06 §4.2]). `SetMaxReloadTime` hands scripts the scaled value ([06 R-WPN-05 §3]). Weapons with no reload — meteor, burn and death weapons — are unaffected. The Classic AI does not read reload; the Modern AI's damage-rate estimates scale. |
 | Unit speed | unit `MaxVelocity`, `TurnRate` (from its stored unsigned 16-bit value), `MoveRate1` and `MoveRate2` by k; `Acceleration` by k²; `BrakeRate` by k² for a unit that does not fly and by k for one that does | every unit moves and turns k× as fast along paths of the same shape | The mover chooses the ground or flight integrator on the definition's `canfly` bit alone ([04 R-MOV-01 §1]). The ground mover accelerates only while the lookahead is beyond twice its turning distance `|err|·speed/turnrate` and the point two ahead is beyond its braking distance `speed²/(2·brakerate)` ([04 R-MOV-01 §4]); both are unchanged, as is the distance to reach top speed, and the time to reach it is 1/k. The flight integrator compares horizontal speed with `brakerate` itself and turns the excess toward the heading, so there `brakerate` is a speed ([04 §10.1]); the loss term `acceleration/maxvelocity` of its decay grows k-fold, and so do the approach speed `sqrt(2·a·d)` and the terminal speed. The movement-rate tiers compare speed with the two thresholds, so a unit changes tier at the same fraction of its speed ([04 R-MOV-01 §6]). No COB port sets a speed ([04 R-COB-03 §1]). Fixed distances do not scale — the waypoint capture radius, the lookahead, the air service radii — so a unit whose step outgrows the capture radius can pass a waypoint and loop back to it, and the collision validator tests only the proposed rectangle ([04 R-COLL-01 §1]); the maintainer accepts overshoot at high factors (P18). Tick cadences (repath, air order deadlines) and weapons — projectile speed, turret turn rate — are unchanged, so fast units outrun more fire. `cruisealt` and the bank and pitch gains are untouched. The Modern AI's absolute speed thresholds (fast, scout) see the scaled speeds. |
+| Builder speed | every `builder` definition: a mobile one's (bmcode 1) `TurnRate` by k, from its stored unsigned 16-bit value; a ground one's `Acceleration` and `BrakeRate` by k as well; and the recorded `BuilderSpeed` factor on every builder. On its own step list, 1–20 | builders turn and reach their unchanged top speed k× as fast, deploy and stow their nanolathe k× as fast, and start a mobile build once in reach | The only mutator whose compiled value engine code reads (§6.7). Top speed is untouched: `maxvelocity` and the movement-rate thresholds are not scaled, so the ground mover's turning and braking distances shrink rather than keep their shape ([04 R-MOV-01 §4]). A flying builder gains turn rate only, because the flight integrator turns `acceleration` and `brakerate` into speed terms ([04 §10.1]). With Unit speed each field is scaled once by k_u·k_b, k_u²·k_b and, for a ground builder's `brakerate`, k_u²·k_b, a flying one's k_u, then saturated at 65,535 and 2³¹−1. The script and approach effects, and their boundaries, are §6.7's. Both computer players' builders are affected, because the catalog is every player's (D7). |
 
 **Expanded sight data — Nanolathe mutator policy (issue #94, user-authorized
 2026-10-05).** Above ×1, enlarge the per-battle compiled inputs in every mode,
@@ -1570,12 +1637,146 @@ rasters continue selecting those inputs from the live definition ([03 §3.2]).
   debug captures gain `mod` and `mutators` fields beside `rules` and
   `content_profile`. The headless report of both commands and the battle
   benchmark's metadata spell the mod `<id>@<version>`, or `none`.
-- `--mutator <name>=<factor>` (repeatable) on both commands selects them. In
+- `--mutator <name>=<factor>` (repeatable) on both commands selects them,
+  `builderSpeed=5` among them. In
   the desktop window the settings key `mutators` selects them when no flag
   is given. The desktop command's `--shot`, `--film`, `--battle-benchmark`
   and `--headless`, and the whole displayless command, never read the key,
   so fingerprint, capture and benchmark runs reproduce from their command
   line.
+- Builder speed travels where the other mutators do: in the canonical string
+  and the identity (`builderSpeed=<k>`), the settings key, the sidecar and
+  replays. Online configuration field 11 is frozen at eleven shared-list
+  indices, so the battle configuration carries it as required extension 19:
+  one `u8` index on its own list, 1..5 for 2, 3, 5, 8, 20, omitted for the
+  identity, so every configuration without it keeps its bytes and identity
+  (DESIGN_MULTIPLAYER §8.6). The simulation manifest's mutator record appends
+  the same index after its eleven bytes only when set, and a builder's
+  definition digest gains its recorded factor only when set.
+
+### 6.7 Builder speed — Nanolathe mutator policy (user-authorized 2026-10-22)
+
+Builders in retail are slow to start work. Measured on the reference install
+under Strict 3.1, a construction kbot (ARMCK) reaches its build stance about
+90 ticks after placing a frame, and between two queued jobs it folds and
+unfolds its nanolathe for about 280 ticks, because the stock script serialises
+open and close requests through one state-request loop. A construction
+vehicle (ARMCV) unfolds in 50–80 ticks, accelerates to its top speed in about
+93 ticks and turns half a circle in about 131. A kbot lab (ARMLAB) opens its
+yard about 65 ticks after an order. A mobile builder also walks to the edge of
+the build footprint although it is already within `builddistance`: retail asks
+the reach expression only when the follower cannot get there
+([05 R-WORK-01 §12], [05 R-WORK-01 §13]). The maintainer chose to address this
+as a mutator, so it is opt-in, applies in every mode and travels with the
+existing selection, sidecar, lobby, replay and identity plumbing.
+
+**This is the first mutator whose compiled value drives engine behaviour.**
+Every other mutator changes a definition field that unchanged retail
+arithmetic reads. Builder speed also records its factor on each builder
+definition, and two engine sites read it: the script VM's timing and the
+mobile-build approach. The maintainer accepted that as a further
+mode-independent exception (D24); it adds no seam, no RNG stream and no
+per-tick state, and nothing consults the mutator set during a tick.
+
+**Strict baseline.** Without the mutator, or at ×1, every builder behaves as
+retail does, in every mode: the VM's arithmetic is the fixed 30-tick
+conversion ([04 §4.6]), and a mobile builder walks to the footprint border
+([04 R-PATH-01 §12], [05 R-WORK-01 §13]). Strict 3.1 with no mutators remains
+the retail baseline, and every fingerprint lock runs with none.
+
+**Scope.** Every definition that authors `builder`: commanders, mobile
+builders of every kind, factories and any nano tower. No other definition
+changes. Both computer players' builders are affected (D7).
+
+**Effects at k > 1.**
+
+1. *Agility.* A builder the allocator gives a mover (bmcode 1,
+   [04 R-FAC-02 §5]) turns k× as fast: `turnrate` ×k, saturated at 65,535. A
+   ground one also gets `acceleration` and `brakerate` ×k in the 16.16 store,
+   by §6.4's rule, saturated at 2³¹−1; `maxvelocity` and the movement-rate
+   thresholds are untouched, so top speed is as authored. A flying builder
+   gets turn rate only (§6.5). With Unit speed each field takes the exact
+   product (§6.4).
+2. *Build-animation timing.* The definition records k in `BuilderSpeed`, and
+   the session latches it on the builder's script VM before `Create`. The
+   VM runs the program's build-animation functions k× faster: inside them a
+   turn, move or spin speed and a spin or stop-spin acceleration becomes
+   `value·k/30` per tick, and a sleep `dur·30/(1000·k)` ticks, with the same
+   signed 32-bit product as retail before the divide. All of it is integer
+   arithmetic truncated toward zero (I3), and a sleep still yields to a later
+   visit at least once. An instruction runs fast by the function it executes
+   in, which needs no per-thread or saved state. At the identity every
+   instruction keeps retail's arithmetic exactly. Spin and stop-spin
+   accelerations scale by k like the speeds, as approved, so a spin ramp
+   takes the same number of ticks to its k× faster speed.
+3. *Start in reach.* A ground mobile builder whose definition records the
+   factor, on any MobileBuild approach visit where retail's reach expression
+   passes — centre to centre, both half-diagonal pads subtracted, signed
+   compare against `builddistance` ([05 R-WORK-01 §2]) — and whose own
+   footprint is clear of the site, releases its walk and stops there. The
+   phase advances as an arrival's does, and the next visit places the frame,
+   as the visit after an arrival does. Placing in the releasing visit would
+   start `StartBuilding` before the halt's `StopMoving`, whose immediate drain
+   runs both together; a stock construction kbot still folding from its
+   previous job holds six script threads, so its request loop would find no
+   free slot of the eight ([04 §4.2]) and the job would never deploy. Other
+   work orders are unchanged. `RepairUnit` already starts once in reach, and
+   `HelpBuild`'s annulus goal stops it near `builddistance`; feature
+   `Reclaim`, unit reclaim, `Resurrect` and `Capture` still walk to the
+   target's footprint border ([04 R-ORD-01 §5]).
+
+**The build-animation functions.** For one loaded program, computed once at
+load from its bytecode: every function reachable through `call-script` and
+`start-script` edges from the engine entry points `StartBuilding`,
+`StopBuilding`, `Activate` and `Deactivate`, minus every function also
+reachable from any of the other thirty-six names the engine starts
+([04 R-CB-01 §1]) — `Create`, the weapon `Aim*`, `AimFrom*`, `Fire*` and
+`Query*` callbacks, `TargetCleared`, `HitByWeapon`, `TakeDamage`, `Killed`,
+`StartMoving`, `StopMoving`, the movement-rate and medium callbacks,
+`SetSpeed`, `SetDirection`, `RockUnit`, `SetMaxReloadTime`,
+`QueryNanoPiece`, `QueryBuildInfo`, `SweetSpot`, `QueryLandingPad` and the
+transport callbacks. A function is the contiguous code from its entry to the
+next entry, and the edges are read by decoding each function linearly. A
+loop shared with any of those entry points therefore keeps retail timing.
+On the reference install the stock construction kbots' and vehicles'
+state-request loop is reached from the build and activation callbacks and not
+from `Create`, which only initialises its state; no stock builder's set holds
+a `random` or `emit-sfx` instruction, so no stock script changes how many
+random numbers it draws. A mod script that does draw inside its set draws at
+the faster cadence. Air repair pads and carriers have empty sets.
+
+**Not included.** Keeping builders deployed between jobs: the stock kbot and
+vehicle scripts aim the nanolathe only while unfolding, so the arm would point
+at the old site.
+
+**Known hazard.** The faster loop leaves retail's eight-slot thread pool
+([04 §4.2]) as it was. A `StartBuilding` whose first drain coincides with a
+`StopMoving` while a stock kbot is folding can still lose its request loop's
+start, as it can in retail; the next-visit placement above keeps the in-reach
+start from causing that coincidence.
+
+**Measured on the reference install** (Strict 3.1, the retail-tier session
+test): ARMCK placement to build stance 92 / 20 / 9 ticks at ×1 / ×5 / ×20,
+the gap between two queued jobs 282 / 58 / 28; ARMCV 57 / 13 / 9 and
+187 / 28 / 17; ARMLAB order to open yard 65 / 17 / 8.
+
+**Tests.** `content.TestBuilderSpeedScalesBuilderAgility` and
+`content.TestBuilderSpeedComposesWithUnitSpeed` lock the transform, its
+saturation and the 64-bit product; `content.TestParseMutatorsRoundTrip`,
+`content.TestMutatorCatalogDescribesTheClosedSet` and
+`content.TestFactorSpellingAndCycling` the per-key step lists;
+`content.TestZeroMutatorsLeaveTheCloneIdentical` and
+`content.TestFrozenInputsRecordFallbacksAndExtensions` the identity.
+`cob.TestBuildAnimationSetExcludesSharedCode`,
+`cob.TestBuilderSpeedScalesOnlyBuildAnimationTiming` and
+`cob.TestBuilderSpeedIdentityIsByteForByte` lock the function set, the
+scaled arithmetic and the unchanged identity path.
+`construction.TestBuilderSpeedStartsWorkInReach` locks the in-reach start
+and the unchanged walk without the factor.
+`session.TestBuilderSpeedTravelsAsExtension19` locks the online record.
+`session.TestBuilderSpeedShortensStockReadinessRetail` and
+`cob.TestStockStateRequestLoopIsABuildAnimation` (retail tier) lock the
+stock relationships and the stock loop's membership.
 
 ## 7. The save sidecar
 
@@ -1623,17 +1824,20 @@ sidecar. A sidecar whose bank is missing is ignored.
 `mod` is `null` when no mod was selected, and the string `custom` for a manual
 root stack. `unitLimit` is the configured unit-limit word, the one that sizes
 a battle. `catalog` and `contentManifest` are the battle catalog's identity
-after mutators and the mounted set's manifest hash. A sidecar with another
+after mutators and the mounted set's manifest hash. A sidecar with an unsupported
 `schema`, or one that does not parse, refuses the load rather than being read
 as absent, which would silently drop the selection it records. A battle with
 unit restrictions adds `"restrictions": {"armkrog": 0, "armpw": 20}` and is
-written as schema 2, so that a build reading only schema 1 refuses it rather
-than restoring the bank without them; every other sidecar stays schema 1
-(§15.5). A battle with official add-ons adds
+written as schema 2 when it has neither official add-ons nor a Survival
+director, so that a build reading only schema 1 refuses it rather than
+restoring the bank without them (§15.5). A battle with official add-ons adds
 `"addons": [{"id": "cavedog-bonus-units", "version": "original", "sha256": "…"}]`,
-each with its content digest (§5.7), and is written as schema 3, with or
-without restrictions, so that a build that cannot restore them refuses the
-load. `contentProfile`
+each with its content digest (§5.7), and is written as schema 3 when it has
+no Survival director, with or without restrictions, so that a build that
+cannot restore them refuses the load. A Survival director selects schema 4,
+with or without restrictions and add-ons. A generated map's recipe selects
+schema 5, with or without any of those. A sidecar with none of these
+four records stays schema 1. `contentProfile`
 is the mounted content's report name: the running config's id, or `retail`
 for content without one. `community` records the session's Community sources and its
 battle-entry table (`Session.CommunitySources`, `Session.EntryCommunity`), so
@@ -1653,6 +1857,34 @@ DESIGN_SESSIONS_AI_SAVE "Modern AI computer player"); the save package keeps
 it as raw JSON. Like the mutators, the
 recorded parameters replace the host's configuration on a load, and a
 record naming a parameter this build does not know refuses the load.
+`alliedSight: true`, present when a skirmish battle's teams shared sight and
+radar (DESIGN_SESSIONS_AI_SAVE "Modern allied sight"), makes the load rebuild
+those teams; like `ai` it leaves the schema alone, so an older build loads the
+bank with sight kept separate. `survival`, present when the battle is a
+Survival battle, is the wave director's record (`session.SurvivalRecord`,
+DESIGN_SURVIVAL §11). It is kept as raw JSON and requires schema 4, so a build
+that cannot restore the director refuses the load rather than loading an
+ordinary skirmish. Schema 4 requires a non-null `survival` record; schemas
+1–3 refuse any `survival` field, including null. The optional `survivalBest`
+field is the host's personal-best eligibility record (DESIGN_SURVIVAL §11),
+also kept as raw JSON; it is valid only with schema 4 and its non-null
+director. `generatedMap`, present when the battle was played on a map the map
+generator made, is that map's recipe (DESIGN_MAP_GENERATOR §10), kept as raw
+JSON. It requires schema 5, and schema 5 requires it, so a build that cannot
+make the map again refuses the load rather than loading the bank on whatever
+map has that name; schema 5 also carries a non-null `survival` director and
+its `survivalBest` record when the battle had them, and `addons` when it had
+any. The load mounts the map before the bank is read, made again from the
+recipe when it is not mounted (§7.3). The save package checks these
+structural combinations on both write and read. The record owners validate
+their versions and contents; an unsupported director, eligibility record or
+recipe refuses the load.
+
+Ordinary sidecars are limited to 1 MiB. Schemas 4 and 5 permit up to 16 MiB
+because a Survival battle's planned wave and history grow during it. The writer and
+reader enforce the same byte limit; an oversized record is a reported save
+failure. Automatic slots validate the staged bank and sidecar before replacing
+the previous checkpoint (DESIGN_SESSIONS_AI_SAVE §5).
 
 ### 7.3 Loading
 
@@ -1673,6 +1905,13 @@ record naming a parameter this build does not know refuses the load.
    not start the download itself. The load makes the recorded mod the
    selected mod (P6). A `custom` sidecar loads only in a manual stack, and a
    manual stack loads only a `custom` sidecar.
+   **Generated map.** On the content the save names, a `generatedMap` recipe
+   finds its map mounted with the recorded files, or makes it again and
+   mounts it before the bank is read: from the menu by a library remount, and
+   from inside a battle by the same content reload a mod switch uses. A map
+   of that name with other files, or a recipe this build cannot make again,
+   refuses the load with the reason; the direct battle view (`--map`) refuses
+   and says to start without it (DESIGN_MAP_GENERATOR §10).
 3. **Rule set.** Bind the recorded name. If this build cannot select it (a
    registered set that is not linked), load under the recorded base and show a
    warning on the battle message line. The load also makes the bound set the
@@ -1715,9 +1954,17 @@ loading-screen lines (§8.3).
 
 **Continuation saves.** A between-missions save starts the next mission
 fresh, so what it takes from its sidecar is the selection that mission is
-entered under: the mod (step 2), the mutators, the rule set and the unit
-limit. Its Community sources are not carried forward; the fresh entry
-resolves the host's, as every new battle does.
+entered under: the mod (step 2), the mutators, the rule set, the unit limit
+and the recorded Community sources. The loaded briefing's Start action
+resolves those sources under the recorded current rule set, rather than
+reusing the previous mission's entry table. Strict still projects a zero
+table. This Nanolathe save policy keeps the Load Game difficulty label and
+the next mission's AI tier consistent (DESIGN_COMMUNITY_PATCH §4.8).
+The sources belong only to that briefing; they do not overwrite the host's
+Community preferences. Leaving it and opening a fresh briefing, or loading
+a continuation without a sidecar, uses the host's current sources.
+`TestContinuationDifficultyMatchesBriefingStart` exercises the load-to-Start
+handoff, the present-zero continuation marker and both fresh-entry paths.
 
 ### 7.4 Contracts this replaces
 
@@ -1770,11 +2017,14 @@ in two columns, so that no list competes with another for space (D14):
   one row per official add-on the library holds or the catalogue offers
   (§5.7). Each row has its switch; *Get* while it is not installed, with the
   download's size and then its progress; or *Already in your install*, with
-  no switch, when the base folder holds its archives. A row whose archives
-  are at hand names their units and shows their build pictures. The card's
+  no switch, when the base folder holds its archives (except model add-ons,
+  which keep the switch or *Get* to restore their model tier). A row whose archives
+  are at hand names their units and shows their build pictures; a model-only
+  row says *Model replacements*. The card's
   note says when the drafted mod leaves add-ons off. The card asks the
   catalogue only when first shown (§5.2) and, with no catalogue and nothing
-  installed, says the catalogue is unavailable. The switches belong to the
+  installed, says the catalogue is unavailable. More rows than fit above the
+  cards scroll. The switches belong to the
   screen's *Apply*, and a *Get* that installs switches its add-on on. The
   Mods & Mutators window has no add-on rows.
 - *Apply* writes the settings for both columns. When the mod or the add-ons
@@ -1801,9 +2051,10 @@ has no X and cannot be removed.
 **The Mutators dialog.** *Change...* opens a modal over the screen built
 from the mutator catalogue (`content.MutatorCatalog`), so a new mutator needs
 no layout work: a scrolling list with a heading row per group (Economy,
-Combat, Movement, Vision), each row showing the mutator and its factor; the
-selected mutator's description beneath; *Raise*, *Lower*, *Default* and
-*Reset all* in the right-hand column; *OK* keeps the changes for the screen's
+Combat, Movement, Builders, Vision), each row showing the mutator and its
+factor; the selected mutator's description beneath; *Raise*, *Lower*,
+*Default* and *Reset all* in the right-hand column, *Raise* and *Lower*
+stepping through the selected mutator's own list (§6.4); *OK* keeps the changes for the screen's
 *Apply*, and *Cancel* restores the set the dialog opened with.
 
 **The Get more mods dialog.** A modal over the screen. Opening it fetches the
@@ -1811,7 +2062,10 @@ manifest (§5.2); when that fails, it shows the cached manifest and its age.
 It lists every manifest entry whose id, version and case-insensitive archive
 hash do not match an install, with name, version, download size and summary.
 The Nanolathe screen's catalogue instead keeps matching rows visible as
-*Installed*. A changed hash offers *Download* again under the original version;
+*Installed*. Its summaries wrap within the room left of the row's button, at
+most two lines with the second cut by an ellipsis, and the catalogue scrolls
+when it holds more mods than fit
+([DESIGN_INTERFACE_HUD_INPUT §3.17](DESIGN_INTERFACE_HUD_INPUT.md#317-the-nanolathe-screen)). A changed hash offers *Download* again under the original version;
 both screens disable the mounted version with *Switch mods before updating*.
 *Download* on a row starts §5.3, with a progress bar; while the archive transfers
 the button reads *Cancel*. One download and install runs at
@@ -1863,6 +2117,7 @@ leaves the line empty (DESIGN_INTERFACE_HUD_INPUT §2.6).
 | `internal/modlibrary` | data directory layout, metadata and the mod's config (§4.2), installed listing, selection resolution (mod → root, config, minimum, preset), extraction and validation, receipts. No network. | both commands |
 | `internal/maplibrary` | separate installed-map root and map-only payload validation, reusing modlibrary extraction and receipts. No network. | desktop command |
 | `internal/addonlibrary` | the official add-on root, archive-only payload validation against the catalogue's contents, the installed listing, an add-on's content digest, recognizing a copy already in the base folder, and the unit and feature names an add-on defines (§5.7), reusing modlibrary extraction and receipts. No network. The desktop command mounts the add-ons through `vfs.GameRoot.Extra`. | desktop command |
+| `cmd/modelpack` | model-only add-on preparation: pinned source ZIPs, first-source-per-filename selection, unchanged model bytes in an archive, deterministic package metadata and per-file provenance (§5.7). No network or battle state. | packaging command |
 | `internal/modfetch` | mod, map and add-on manifest fetch and cache, downloads with resume and progress. The content-download package that imports `net/http`; multiplayer WebSocket HTTP is isolated in `internal/relay` (DESIGN_MULTIPLAYER §16.5.6). | `cmd/nanolathe` only |
 | `internal/content` | `Factor`, `Mutators`, `ApplyMutators`, the mutated catalog identity; `Restrictions`, `CheckRestrictions`, `ApplyRestrictions` and the restricted identity (§15.2) | session, commands |
 | `internal/save` | the sidecar type and its read/write, separate from the bank's bytes | session, commands |
@@ -1870,6 +2125,7 @@ leaves the line empty (DESIGN_INTERFACE_HUD_INPUT §2.6).
 | `internal/settings` | the `mod`, `mutators`, `addons` and mod-scoped `restrictions` keys | commands |
 | `cmd/nanolathe` | chip, screen, in-process reload, loading-screen lines, drop-to-install, `--mod`, `--addon`, `--mutator`, `--restrict`, the restriction card and the unit viewer's restriction editor (§15.9) | — |
 | `cmd/nanolathe-headless` | `--mutator`, `--restrict` and `--mod` (flags only, never the settings file). `--mod` mounts an installed mod from the library as the last root with its own config, through `modlibrary`'s command-line selection; it is refused beside several `--root` flags, and the command never fetches. `--mod-config` names a config file for a manual stack or in place of the mod's own | — |
+| `cmd/ai-arena` | `match -mod` (flag only, never the settings file): mounts an installed mod after `-root` with its own config's content section, through the same `modlibrary` selection; the match keeps the arena's rule set, so the config's Community table is not applied, and the command never fetches | — |
 
 **Guards.** Architecture tests: only `internal/modfetch` and the multiplayer
 WebSocket transport in `internal/relay` import `net/http`; only `cmd/nanolathe`
@@ -1906,8 +2162,11 @@ dependencies.
 | Mutators reach fresh skirmish, mission entry and restore; all six fingerprint locks unchanged | `session`, `headless` |
 | Under Strict 3.1 with Build speed ×2, a fixed construction finishes in half the ticks and bills the same total resources (a relationship, not a census) | `session` |
 | Under Strict 3.1, Income scales a generator's and a solar collector's settlement production k-fold and leaves a self-powered unit neutral; Unit speed shortens a straight move to about 1/k of the ticks; Fire rate builds a stockpile round in 1/k of the ticks at the authored cost (relationships) | `session.TestStrictIncomeScalesSettlementProduction`, `session.TestStrictUnitSpeedShortensAStraightMove`, `session.TestFireRateStockpilesAtEqualCost` |
-| At the extreme steps on the stock catalog: no aircraft's flight decay reaches zero under Unit speed, and no metal deposit is scaled | `session.TestStockCatalogUnderExtremeSteps` (retail tier) |
+| At the extreme steps on the stock catalog: no aircraft's flight decay reaches zero under Unit speed with Builder speed ×20 beside it, and no metal deposit is scaled | `session.TestStockCatalogUnderExtremeSteps` (retail tier) |
+| Builder speed: per-key step lists; agility transform, saturation and the 64-bit product with Unit speed; the build-animation function set, scaled script timing and the unchanged identity path; the in-reach start and the unchanged walk without it; online extension 19; stock readiness relationships | the tests of §6.7 |
 | Sidecar round trip; a load without one behaves as today; a load restores rule set, Community sources and entry table, unit limit and mutators, and selects the recorded mod and mutators (P6); bank bytes unchanged | `save.TestSidecarRoundTripsEveryModSpelling`, `save.TestSidecarRefusesAnotherSchemaAndMalformedFiles`, `main.TestSaveSidecarRestoresTheRecordedSelection` (retail tier) |
+| A Survival director selects schema 4 even with restrictions or add-ons; schemas 1–3 reject a Survival field, schema 4 requires a non-null director, and personal-best eligibility requires that director; ordinary save schemas are unchanged | `save.TestSidecarSchemaFollowsSurvival`, `save.TestSidecarRefusesUnsupportedSurvivalCombinations`, `save.TestWriteSidecarRefusesInvalidSurvivalCombinations` |
+| A generated map's recipe selects schema 5 with or without the other records; schema 5 requires the recipe and earlier schemas refuse one | `save.TestSidecarSchemaFollowsGeneratedMap` |
 | A save made under another installed mod reloads onto it and then restores; one whose mod is not installed is refused, naming it | `main.TestLoadingAnotherModsSaveSwitchesToItFirst`, `main.TestSaveSidecarRestoresTheRecordedSelection` (retail tier) |
 | The reclaim-pulse product at the maximum step for the stock catalog (§6.5) | `content`, retail tier |
 | Chip on retail, ProTA and Escalation menus; Mods & Mutators screen and the *Get more mods* dialog; loading-screen lines | `--shot` captures, reviewed |
@@ -1931,6 +2190,12 @@ The applicable gates are those in [ARCHITECTURE §6](ARCHITECTURE.md#6-verificat
   lines.
 - [PROTA_SUPPORT](PROTA_SUPPORT.md): the Mods & Mutators screen as the
   ordinary route, with manual roots as the alternative.
+- For Builder speed (§6.7): AGENTS.md's mutator exception and
+  [DESIGN_ECONOMY_CONSTRUCTION](DESIGN_ECONOMY_CONSTRUCTION.md) "The approach"
+  (done with this unit); [DESIGN_MULTIPLAYER](DESIGN_MULTIPLAYER.md) §8.6's
+  extension table (required ID 19) and §16.3's runtime-checkpoint Mutators
+  record, which now retains `BuilderSpeed` after `BuildSpeed` in lexical
+  order — both owned elsewhere and still to update.
 - For unit restrictions (§15): AGENTS.md and [INVARIANTS](INVARIANTS.md) I11
   (the fifth mode-independent exception; INVARIANTS done with this design,
   AGENTS.md by the maintainer);
@@ -2004,6 +2269,9 @@ fingerprint. Units 1–8 are implemented.
    `minimumEngine` once releases are stamped.
 11. **Unit restrictions.** Implemented as the four units of §15.12; the
    follow-ups listed there remain.
+12. **Builder speed.** The mutator, its own step list, the script timing, the
+   in-reach start and online extension 19 (§6.7, D24). Implemented
+   2026-10-22.
 
 ## 14. Research map
 
@@ -2349,11 +2617,13 @@ Rebuilding them over the filtered table, for both filters, is a follow-up
 - **Sidecar.** `save.Sidecar.Restrictions` (`map[string]int`,
   `"restrictions": {"armkrog": 0, "armpw": 20}`), written from
   `Session.Restrictions.Map()` by `session.SaveSidecar` when the battle has a
-  set. A sidecar carrying it is written as schema 2 (proposal R-P7): a build
+  set. Without official add-ons or a Survival director, a sidecar carrying
+  it is written as schema 2 (proposal R-P7): a build
   that reads only schema 1 refuses it (§7.2), where it would otherwise load
   the bank without the restrictions and misread its definition indices. A
-  sidecar without restrictions stays schema 1, so every other save remains
-  readable by older builds. This build reads both; a schema-1 sidecar with
+  sidecar without restrictions, add-ons or Survival stays schema 1, so
+  ordinary saves remain readable by older builds. Add-ons and Survival select the higher schemas
+  in §7.2, which also permit restrictions. A schema-1 sidecar with
   `restrictions`, or a schema-2 sidecar without a non-empty one, is malformed.
 - **Load.** §7.3 step 6 re-checks the recorded set against the restore's base
   catalog (§15.3: an issue refuses the load), applies it before the
@@ -2541,7 +2811,7 @@ The user approved all twelve as written on 2026-10-05.
 | R-P4 | An entry the content cannot take stops a `--restrict` command, is left out with a notice from the settings, refuses a save's load, and rejects a field-12 configuration | §15.3 |
 | R-P5 | `restrictions` is a mod-scoped, atomic settings path (per mod, inherited from the base when a mod has none); a mod's config cannot recommend restrictions | §15.9 |
 | R-P6 | Loading a save makes its recorded restrictions the running content's setting, as P6 does for mutators | §15.5 |
-| R-P7 | A sidecar with restrictions is written as schema 2, every other sidecar stays schema 1 | §15.5 |
+| R-P7 | Without official add-ons or a Survival director, a sidecar with restrictions is written as schema 2 and otherwise stays schema 1; §7.2 owns higher schemas | §15.5 |
 | R-P8 | The card sits on the Mutators tab and opens the editor; the viewer opened with Ctrl+U gains *Apply* | §15.9 |
 | R-P9 | Survival plans a capped unit as before and drops a refused pick, with no re-pick; the wave keeps its planned budget for scoring; a unit reachable only through a removed builder leaves the pool; a roster loses its removed entries | §15.6 |
 | R-P10 | The Modern AI's cap is its own slice's count, plus its own requests that have no record yet; the executor drops a command whose product's cap was reached in the reaction window | §15.7, [DESIGN_SESSIONS_AI_SAVE](DESIGN_SESSIONS_AI_SAVE.md#modern-ai-restriction-caps) |
@@ -2567,7 +2837,7 @@ checked under Strict 3.1 and under Modern unless the row says otherwise.
 | Survival: a removed unit never enters the pool or a plan; a capped attacker pick is refused, dropped, not retried and draws nothing; the wave plan's draws are unchanged by a cap; a roster that loses its only tier-1 opener refuses entry naming the restrictions | `survival`, `session` |
 | Classic computer player against a capped product: refused, retried after 300 ticks, no other change | `session` (retail tier) |
 | Modern AI: a candidate at its cap is not chosen; its pending requests count; a stale capped command is dropped by the executor; synchronous and asynchronous hosts agree | `aikit` (see [Modern AI restriction caps](DESIGN_SESSIONS_AI_SAVE.md#modern-ai-restriction-caps)) |
-| Sidecar: schema 2 with restrictions and schema 1 without; a save and load restores the restricted index space and selects the set; an unknown recorded unit refuses the load | `save`, `main` (retail tier) |
+| Sidecar: without add-ons or Survival, schema 2 with restrictions and schema 1 without; a save and load restores the restricted index space and selects the set; an unknown recorded unit refuses the load | `save`, `main` (retail tier) |
 | Settings: the per-mod layer replaces the base set whole; a name the content lacks is left out with the notice; a mod config naming `restrictions` is refused | `settings`, `modlibrary`, `main` |
 | Flags: `--restrict` replaces the saved set, `none`, the refusals of §15.5; capture and benchmark modes never read the key | `main`, `nanolathe-headless` |
 | Editor and card: row states, stepper ends and the start at 1 from *No limit*, Reset emptying the set, *Restricted only*, draft and *Apply*/*Back* from both entries; captures of the card and the editor reviewed | `main`, `--shot` |

@@ -357,7 +357,22 @@ type Player struct {
 	// 2026-09-25). Normalize keeps "classic" and reads everything else as
 	// Modern, which the writer omits.
 	AI string `json:"ai,omitempty"`
+	// Start is where the row's commander was placed on Skirmish.StartMap, a
+	// Nanolathe Modern lobby choice with no retail registry value: absent
+	// leaves it to Location (docs/DESIGN_SESSIONS_AI_SAVE.md "Modern chosen
+	// start positions"). Normalize drops a point outside 0..StartLimit.
+	Start *StartPoint `json:"start,omitempty"`
 }
+
+// StartPoint is a chosen commander start in world pixels.
+type StartPoint struct {
+	X int `json:"x"`
+	Z int `json:"z"`
+}
+
+// StartLimit bounds a stored start point's coordinates, as
+// session.StartPointLimit does a battle's.
+const StartLimit = 1 << 20
 
 // PlayerAIClassic is the stored word of a row that plays the Classic AI; a
 // Modern row stores none.
@@ -366,15 +381,23 @@ const PlayerAIClassic = "classic"
 // Skirmish is the SKIRMISH.GUI setup: everything retail stores under the
 // Skirmish* value names plus the per-slot rows.
 type Skirmish struct {
-	Map            string   `json:"map"` // SkirmishMap, basename without extension
-	NumPlayers     int      `json:"numPlayers"`
-	Difficulty     int      `json:"difficulty"`
-	Location       int      `json:"location"`
-	CommanderDeath int      `json:"commanderDeath"`
-	Mapping        int      `json:"mapping"`
-	LineOfSight    int      `json:"lineOfSight"`
-	LOSType        int      `json:"losType"`
-	Players        []Player `json:"players"`
+	Map            string `json:"map"` // SkirmishMap, basename without extension
+	NumPlayers     int    `json:"numPlayers"`
+	Difficulty     int    `json:"difficulty"`
+	Location       int    `json:"location"`
+	CommanderDeath int    `json:"commanderDeath"`
+	Mapping        int    `json:"mapping"`
+	LineOfSight    int    `json:"lineOfSight"`
+	LOSType        int    `json:"losType"`
+	// AlliedSight is the Allied Sight option, a Nanolathe lobby choice with
+	// no retail registry value: teammates share sight and radar. Absent is
+	// false, retail's separate sight (docs/DESIGN_SESSIONS_AI_SAVE.md
+	// "Modern allied sight").
+	AlliedSight bool `json:"alliedSight,omitempty"`
+	// StartMap is the map the rows' start points were placed on; a load for
+	// another map drops them, since a point means nothing elsewhere.
+	StartMap string   `json:"startMap,omitempty"`
+	Players  []Player `json:"players"`
 }
 
 // ModSelection is the settings key `mod`: one mod's id and, optionally, its
@@ -559,6 +582,13 @@ type Settings struct {
 	// Fullscreen is Nanolathe's desktop presentation preference, independent of
 	// retail display options. Absent in older settings files means windowed.
 	Fullscreen bool `json:"fullscreen"`
+	// Language is the interface language (internal/i18n, docs/DESIGN_I18N.md): a language
+	// code such as `ukrainian`, or empty for English, the language the
+	// interface is written in. It is presentation only. Normalize keeps it
+	// verbatim apart from case and surrounding space; a code this build has
+	// no catalog for starts in English with a notice where it is selected,
+	// and a --language flag wins over it for one run.
+	Language string `json:"language,omitempty"`
 	// Presentation selects Nanolathe's executor and presentation cap, separate
 	// from the retail display options (DESIGN_GPU_RENDERER §13.5, §14.6).
 	Presentation Presentation `json:"presentation"`
@@ -1267,6 +1297,9 @@ func (s *Skirmish) Normalize() {
 		} else {
 			s.Players[i].AI = ""
 		}
+		if p := s.Players[i].Start; p != nil && (p.X < 0 || p.Z < 0 || p.X >= StartLimit || p.Z >= StartLimit) {
+			s.Players[i].Start = nil
+		}
 	}
 }
 
@@ -1288,6 +1321,11 @@ func (s *Settings) Normalize() {
 	// neither vocabulary. An unknown selector is rejected where it is
 	// resolved, at the mount boundary, so a typo names itself there.
 	s.ContentProfile = strings.TrimSpace(s.ContentProfile)
+	// English is the interface as written, and the absent value.
+	s.Language = strings.ToLower(strings.TrimSpace(s.Language))
+	if s.Language == "english" {
+		s.Language = ""
+	}
 	// The mutator entries are kept verbatim for the reader that parses them;
 	// only an empty set is folded to absent.
 	if len(s.Mutators) == 0 {

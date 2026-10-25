@@ -53,9 +53,32 @@ think.
 (§3–§5 describe the brain with the §11 switches off; §11 lists what each
 switch changes.)
 
-Each think it first detects failures and retreats, then scores options for
-up to `Attention` builders (rotating start), within the APM budget left
-after reserving one action for the army and one per factory with room.
+Each think it first checks the commander's retreat, then reserves one
+action for the army while the base is threatened and one for a factory
+with an empty, unstalled queue, then detects failures and the other
+builders' retreats, and scores options for up to `Attention` builders
+(rotating start) within the APM budget left.
+
+The commander retreats home when it is more than 350 wu out, or below
+60% health, where enemy threat is at least half `threat_half` and
+outweighs own armed power; no commander work site is offered beyond
+350 wu of home where that test already holds. Its leash is `com_radius`
+or, when farther, the distance from home to the second-nearest land metal
+spot, so a start chosen away from the metal still gets its opening
+extractors.
+
+At a start with one spot inside `com_radius` and a richer one beyond it
+(Ashap Plateau's first start: 114 and 1065 wu away) the stretch lets the
+commander walk to the far spot first, about half a minute, and build the
+near one after. Two alternatives were measured on 2026-10-21 in mirrors
+on Ashap Plateau, The Pass, Sherwood and Lake Shore (seeds 81–92, 96 games
+per persona): stretching only when no spot lies inside `com_radius`
+scored 51.6 / 52.1 / 44.8 % at Easy / Medium / Hard, and holding the
+leash at `com_radius` while a spot inside it is free (near spot first)
+scored 50.0 / 50.0 / 47.9 %. At that Ashap start at Hard the far-first
+order won 49.5 of 60 games, near-first 40 of 60 (96 more games on seeds
+101–148), and stretching only without a spot inside 6 of 12. Neither
+alternative was kept.
 
 | candidate | considerations (multiplied) |
 |---|---|
@@ -65,9 +88,17 @@ after reserving one action for the army and one per factory with room.
 | storage | overflow (store ≥ 70% full × coverage 1.2–3.0) × `half(count)` × travel × threat |
 | factory | unmet army spending: (spendable × (100−EcoShare)% − factory capacity incl. planned) / this factory's drain; first-factory urgency rising to 3000 by `fac_time`; × suitability (best product efficiency vs the best factory on offer × air plant exposure `half(enemy AA, 3000)` × same-type `half(count, 1.5)` × tech-2 readiness `w_tech × lin(metal income, 12, 30/s)`) × affordability `half(cost ÷ supply, 90 s)` × travel |
 | defense | danger (decayed threat at our most threatened building, or a late-game baseline at the front; anti-air towers answer seen aircraft) × efficiency vs the best tower × `half(towers within 500 wu)` × affordability × travel |
-| radar | time ramp (1–3 min) × `half(3 × count)` × affordability × travel × threat; veto within the larger authored radar radius of an own stationary sensor or live build reservation, across definitions |
+| radar | time ramp (1–3 min) × `half(3 × count)` × affordability × travel × threat; veto within the larger authored radar radius of an own stationary sensor or live build reservation, across definitions. From minute 10, while that test finds no sensor over home, need 4000 and the site a quarter of the way from home to the front (`radar_home`) |
 | assist nanoframe | resource slack `lin(min(covM, covE), 500, 1400)` × priority (factory 1500, economy 1000, defense 1000+danger, other 700) × travel |
 | guard factory | `lin(covM, 900, 2500)` × army share × travel — only factories that are producing |
+
+With two or more builders idle, one action moves a group of them (the
+idle-builder rescue): a Guard of the producing factory with the most idle
+builders within 1200 wu, and from minute 20, when no factory takes them, a
+Repair of the damaged own or allied unit or unfinished frame with the
+most. The repair waits for minute 20 because its action competes with the
+opening economy. The commander and builders authored `canguard=0` are
+never in a guard group; reclaiming stays the per-builder clear candidate.
 
 With the `expand` switch (off by default, §13.10), from minute
 `expand_from` an extractor site is scored with a metal need of at least
@@ -115,11 +146,13 @@ Stability and bookkeeping:
 ## 4. Production layer (factories)
 
 Factories with fewer than two queued products (one building + one queued)
-get one product each, within the APM budget. A factory whose pad has held
-no nanoframe for 20 s while its queue is not empty is *blocked*: own units
-parked on the pad are moved out along the +Z exit lane (every 10 s); after
-three clears it is written off from spend capacity and its type's field
-rotates.
+get one product each, within the APM budget; a persona below 100 APM
+queues a combat unit two at a time. A factory whose pad has held no
+nanoframe for 20 s while its queue is not empty is *blocked*: own units
+parked on the pad, and idle ones in the short lane in front of it, are
+moved in one group to a rally behind home (every 10 s); after three clears
+it is written off from spend capacity and its type's field rotates, and
+its pad is still cleared so its queue can resume.
 
 | candidate | considerations |
 |---|---|
@@ -195,7 +228,7 @@ runs defaults); persona keys (`think`, `react`, `apm`, `attention`,
 | `att_min` | 800 | 100–6000 | minimum wave value |
 | `att_grow` | 150 | 0–1000 | wave value added per minute |
 | `att_ratio` | 130 | 50–400 | wave value as percent of estimated enemy army |
-| `com_radius` | 900 | 300–3000 | commander leash from home (world units) |
+| `com_radius` | 900 | 300–3000 | commander leash from home (world units), stretched to the second-nearest land metal spot (§3) |
 | `spots_per_con` | 3 | 1–12 | free safe spots per builder before more builders are wanted |
 | `fac_time` | 100 | 20–600 | seconds by which the first factory is fully urgent |
 | `w_air` | 100 | 0–1000 | air plant desire (percent of its anti-air-damped suitability) |
@@ -209,7 +242,8 @@ runs defaults); persona keys (`think`, `react`, `apm`, `attention`,
 | `reach_mix` | 1 | 0–1 | switch: reach over the plausible enemy starts; stranded factories make a home guard only (§13.1, §13.8) |
 | `fleet` | 1 | 0–1 | switch: against an enemy navy, heavier hulls, light boats kept to a few (§13.2, §13.8) |
 | `tidal_field` | 1 | 0–1 | switch: water economy in fields, later shipyards on a ring, clear of the yards (§13.3) |
-| `growth` | 16 | 0–31 | human economy shape at full ambition, a sum of parts: 1 expansion, 2 tech-2 timeline, 4 constructors per extractor, 8 factories per income, 16 constructor floor, which acts at every ambition (§13.4) |
+| `growth` | 16 | 0–31 | human economy shape at full ambition and at every ambition after minute 20, a sum of parts: 1 expansion, 2 tech-2 timeline, 4 constructors per extractor, 8 factories per income, 16 constructor floor, which acts at every ambition (§13.4) |
+| `long_growth` | 1 | 0–1 | switch: after minute 20, while the metal store is 80% full, the lower personas also play growth's expansion, tech-2, constructor-ratio and factory parts; 0 leaves the old ambition gate in place |
 | `fac_first` | 0 | 0–5 | first factory family: 0 none, 1 kbot lab, 2 vehicle plant, 3 air plant, 4 shipyard, 5 drawn per game (§13.5) |
 | `w_fac_first` | 300 | 100–1000 | percent by which other factories rate below the chosen family's until one of it is owned (§13.5) |
 | `expand` | 0 | 0–31 | mid-game expansion, a sum of parts: 1 extractors on the expansion pace, 2 constructors follow the expansion, 4 failed spots held until seen empty, 8 contested spots behind our army, 16 factories follow the income while metal banks (§13.10) |
@@ -220,6 +254,9 @@ runs defaults); persona keys (`think`, `react`, `apm`, `attention`,
 | `cloak` | 1 | 0–1 | switch: cloak-capable units, the commander included, cloak while threatened (or authored to start cloaked) and the energy store pays (§14.1) |
 | `gates` | 1 | 0–1 | switch: a Talon gate pair from the base to the front, dialed, carries the ground army (§14.2) |
 | `play` | 7 | 0–15 | the play review's changes (§15), each measured in mirrors against the brain without it, a sum of parts: 1 a factory whose army cannot reach the enemy is not the land constructor source while a land or hover factory that reaches is on offer, 2 the first constructor goes ahead of combat units at a shipyard or air plant while the commander is the only builder, 4 an extractor waits for energy coverage while the energy store is below half, 8 the launch value's army curve scaled by our income; 0 is the brain before the review |
+| `radar_home` | 1 | 0–1 | switch: from minute 10, while no stationary radar stands, is under way or is assigned over home, one there is wanted at need 4000 instead of the ordinary at most 1000, a quarter of the way from home to the front instead of halfway between the front and the rally point; 0 is the forward radar alone |
+| `wall_build` | 1 | 0–1 | switch: with the defense plan, from minute `wall_from` an idle or helping constructor builds three wall pieces across the approach in front of a tower that serves the ground plan, in a zone enemy ground forces have approached; one segment per tower and per 90 s (§16) |
+| `wall_from` | 12 | 0–120 | minute from which `wall_build` builds segments (§16) |
 
 `naval=0,air=0,tech=0,layout=0,army=0` is the brain before §11–§12
 (verified identical, result JSON for result JSON, on a land and a water
@@ -1076,21 +1113,29 @@ The benchmark's recommendation (d): human land-map winners hold 0.57 /
 util+tac plateaus near 14), build one factory per ~14 metal/s of income
 with the second around minute 8 (util+tac twice as many), and 73% of
 winners have a tech-2 factory, at a median minute 12. `growth` is a sum
-of parts, at full ambition only (easy and medium keep their tier caps,
-style.go):
+of parts, at full ambition and, as Nanolathe Modern AI policy, at every
+ambition from minute 20 (before that, easy and medium keep their tier
+caps, style.go; the tier curves still scale the counts by ambition):
 
 | part | what it does |
 |---|---|
 | 1 expansion | extraction territory full to two thirds of the way to the enemy base (contested spots become claimable), extractor travel half-life doubling from minute 10 to 20, extractor sites scored with a metal need of at least 600‰ while energy is not short, and helpers (guarding, assisting) leave for a new building that beats their help without the hysteresis margin, helping factories from a lower metal coverage |
 | 2 tech 2 | the tech timeline to ¾ of `tech_time` (minute 12) on a 12–24 metal/s income gate, held back by pressure on the base or an enemy army estimate of 1.5–3× ours (not from 0.9×), first tech-2 factory rated at least nominal |
 | 4 constructors | while metal is a surplus (coverage ≥ 1.1 or the store banking), constructors to 0.55 per finished extractor at minute 12 rising to 0.75 by 20 (ramped in from minute 8), plus one per `spots_per_con` claimable free spots (at most two); below it wanted outright, beyond it at a third, a fifth... |
-| 8 factories | another factory only while fewer than one per 14 metal/s of income, or two from minute 8 (the first tech-2 factory exempt; a store 80% full lifts the cap; walled-in factories do not count) |
+| 8 factories | another factory only while fewer than one per 14 metal/s of income, or two from minute 8 (the first tech-2 factory exempt; a store 80% full lifts the cap; walled-in factories do not count; with at least two stalled pads and half the factories stalled, no more until one produces again) |
 | 16 constructor floor | one constructor from minute 5, two from minute 8, on any map and at every ambition |
 
 The investments of parts 1, 4 and 8 (the helper rule aside) wait for
 `growSafe`: from minute 8 (the opening and the first push are the
 brain's own), while our army is at least the estimated enemy army and
 the base is not under pressure.
+
+`long_growth` (default 1) is the long-game switch for the other parts:
+before minute 20 the lower personas ignore parts 1, 2, 4 and 8, and from
+minute 20 the switch supplies all of them while the metal store is 80%
+full (metal the smaller plan is not spending); 0 restores the old
+full-ambition gate for those configured bits. `growth=0` disables every part, the
+constructor floor included.
 
 **The floor (16) is the default.** On The Pass (four metal spots) the
 expansion room is zero and the economy share of a ~7 metal/s income is
@@ -2090,7 +2135,7 @@ metal store empty.
 |---|---|
 | 1 makers last | no metal maker is started while a free, safe extractor spot on our side stands open that a builder of ours can reach and fit (`shared.freeSafe`: free on the board, not blocked after a failure, territory ≥ 600‰, threat below `threat_half`; with the terrain model, reachable by a builder class that can make an extractor that fits it; the commander only within its leash) |
 | 2 energy follows metal | no energy building and no energy storage is started while the energy store is at least nine tenths full and not draining: income covers expense, or metal is short (coverage below nominal), when the expense read is only requested. The opening lead (energy before the first extractor, first three minutes) is exempt. A builder with nothing worth building assists, guards, reclaims or waits |
-| 4 home spots | when the ambition extractor cap binds, spots within the commander's leash of home (`com_radius`, which ambition scales: 846 wu at medium, 724 at easy) stay in the plan; only spots beyond it wait for the tier curve, and makers wait as before |
+| 4 home spots | when the ambition extractor cap binds, spots within the commander's leash of home (`com_radius`, which ambition scales: 846 wu at medium, 724 at easy; §3 stretches it to the second-nearest land spot) stay in the plan; only spots beyond it wait for the tier curve, and makers wait as before |
 
 At ambition 100 there is no cap, so hard plays parts 1 and 2. `metal=0`
 is the brain before this section, game for game (checked: identical
@@ -2584,3 +2629,53 @@ slower commander).
 **Open, general to every side:** armies that trickle or never push;
 anti-air counted over the whole army rather than near the base; constructors
 lost to raids not replaced at medium.
+
+## 16. Walls (`wall_build`, `wall_from`; the army's breach requests)
+
+docs/DESIGN_SESSIONS_AI_SAVE.md "Modern AI walls" is the contract; this is
+how the economy carries it.
+
+**Segments** (`econ_walls.go`). The retail planner never builds a wall, and
+this brain had no role for one, so it never did either. Under the defense
+plan, from minute `wall_from`, a tower that serves the ground plan (a ground
+tower, or a missile tower under the front rules: the default tower is a
+missile tower) in a zone whose observed approach weighs at least a few
+units' worth of sightings gets one segment of three touching pieces, 96 wu
+in front of it across the approach. Pieces keep off the army's own corridors
+and out of passes, and `Kit.BuildExact` refuses blocked sites, factory lanes
+and metal spots. The builder is an idle or helping constructor, the nearest
+to the tower, building the cheapest wall piece it makes while the stores or
+90 s of income pay for three. There is one segment every 90 s. A persona
+whose think budget is one or two actions orders the rest of a segment on
+later thinks. Report: `wall_segments`, `wall_pieces`, and
+`wall_why_tower|builder|site` for thinks a segment was due but not ordered.
+
+**Breach constructor** (`econ_breach.go`). When the tactics army reports a
+squad held at an enemy wall (`Board.BreachX`, tactics README "Walls"), the
+cheapest reclaim-capable constructor, the commander never, goes to reclaim
+the pieces there (`Kit.Breach`): a tooth costs a builder under a second
+whatever its power, where the army's guns take a minute. It ignores the
+threat retreat, only one is out at a time and one a minute at most, two
+constructors always stay behind, and it is called off 15 s after the army
+stops asking. Report: `breach_sent`, `breach_recalled`.
+
+**Measured** (2026-10-20): both halves together against
+`walls=0,wall_build=0`, eight maps, 40 minutes, sides swapped, points =
+(W + D/2) / games:
+
+| persona | seeds | games | points | segments per game |
+|---|---|---|---|---|
+| easy | 51–74 | 384 | 49.0 % (47.7 and 50.3 by half) | 3.2 |
+| medium | 51–62 | 192 | 50.5 % | 5.2 |
+| hard | 51–62 | 192 | 51.8 % | 3.6 |
+
+Between computer players walls neither help nor hurt: armies seldom meet
+one, and a segment costs only an idle constructor's time and three pieces.
+Think cost is unchanged (50.5 against 50.3 µs mean). Refights of a
+play-tested Crooked Creek 2v2, the human's seat played by a control
+computer (60 minutes, seeds 1–12, both team orientations, 24 games each at
+easy and medium), give the walls side 51.4 % and 50.3 % of the value on the
+map at 60 minutes; it lost no commander, the control one of 48. The walls
+seats built pieces in those games (the sampled census saw 1.5 per seat at
+easy, 2.0 at medium). The breach's own measurements, in a walled base, are
+in the tactics README "Walls".

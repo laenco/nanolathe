@@ -1,5 +1,5 @@
 # Functions no shipped binary can reach, from
-#   deadcode -tags retail ./...   (tests are NOT roots)
+#   GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 deadcode -tags retail ./...   (tests are NOT roots)
 #
 # Shrink-only ratchet enforced by tools/lint. An entry here is reachable
 # from tests but from no main package: test infrastructure, a superseded
@@ -36,7 +36,6 @@ github.com/nanolathe-gg/nanolathe/internal/construction NewService
 github.com/nanolathe-gg/nanolathe/internal/content ApplyDownloadMenus
 github.com/nanolathe-gg/nanolathe/internal/content ApplyMovementFootprints
 github.com/nanolathe-gg/nanolathe/internal/content CompileCategories
-github.com/nanolathe-gg/nanolathe/internal/content CompileMaps
 github.com/nanolathe-gg/nanolathe/internal/content CompileUnits
 github.com/nanolathe-gg/nanolathe/internal/content CompileWeaponsWithDuplicates
 github.com/nanolathe-gg/nanolathe/internal/content canonicalUnitMap

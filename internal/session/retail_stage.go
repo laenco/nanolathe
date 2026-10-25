@@ -79,6 +79,16 @@ type RetailLoadDeps struct {
 	// save, and every sidecar that does not carry the record — seeds them
 	// from the load's entry seed and leaves every computer player Classic.
 	AIControllers *AIControllers
+	// Survival is a Survival battle's director from the save's sidecar
+	// (RecordSurvival, docs/DESIGN_SURVIVAL.md §11). Nil restores an ordinary
+	// skirmish or campaign battle.
+	Survival *SurvivalRecord
+	// AlliedSight is a skirmish save's sidecar choice that the teams share
+	// sight and radar (docs/DESIGN_SESSIONS_AI_SAVE.md "Modern allied
+	// sight"). The restored battle rebuilds its teams from the restored
+	// alliance table before any unit publishes coverage. A campaign bank
+	// takes none.
+	AlliedSight bool
 }
 
 // RetailBattleStage is an unreachable, fully detached staging result. The
@@ -288,8 +298,7 @@ func StageRetailBattle(bank *save.Bank, deps RetailLoadDeps) (*RetailBattleStage
 	}
 	for i := range image.Players {
 		if image.Players[i].Index >= 0 && image.Players[i].Index < len(s.Econ.Players) {
-			image.Players[i].ApplyToEconomy(&s.Econ.Players[image.Players[i].Index])
-			s.Econ.Players[image.Players[i].Index].Exists = true
+			s.restoreRetailPlayer(image.Players[i])
 		}
 	}
 	// The shared end countdown and latch are not among the persisted
@@ -314,6 +323,12 @@ func StageRetailBattle(bank *save.Bank, deps RetailLoadDeps) (*RetailBattleStage
 	if err := createAndBindServices(s); err != nil {
 		return nil, fmt.Errorf("session: retail shell composition: %w", err)
 	}
+	// The saved battle's vision teams, from the alliance rows the player
+	// records just restored, before the restored units publish coverage.
+	if deps.AlliedSight && sessionKind == sessionKindSkirmish && seatRulesOf(s.Rules).AlliedSightChoice() {
+		s.Skirmish.AlliedSight = true
+		s.setAlliedVisionTeams()
+	}
 	if err := s.initializeBuilderOptions(deps.BuilderOptions); err != nil {
 		return nil, err
 	}
@@ -330,6 +345,11 @@ func StageRetailBattle(bank *save.Bank, deps RetailLoadDeps) (*RetailBattleStage
 	// now exists and no controller does yet, so the first one each manager
 	// builds seeds and resumes from the record.
 	if err := restoreAIControllers(s, deps.AIControllers); err != nil {
+		return nil, fmt.Errorf("session: retail restore: %w", err)
+	}
+	// A Survival battle's director, before any unit or coverage exists, as
+	// battle entry builds it (survival_save.go).
+	if err := restoreSurvival(s, deps.Survival); err != nil {
 		return nil, fmt.Errorf("session: retail restore: %w", err)
 	}
 	stage := &RetailBattleStage{Image: image, Session: s}

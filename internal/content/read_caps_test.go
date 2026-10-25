@@ -68,7 +68,7 @@ func bigTerrainFixture(size int) []byte {
 // retail cap refuses it and a profile's raised cap admits it, with the same
 // compiled header either way.
 func TestMapReadCapIsProfileData(t *testing.T) {
-	const oversize = 17 << 20 // past the 16 MiB retail cap
+	oversize := int(RetailTNTBytes) + 1<<20 // past the baseline cap
 	inner := newFixtureFS(t,
 		fixtureFile{path: "maps/wide.ota", data: "[GlobalHeader] { [Schema 0] { Type=Network 1; } }"},
 		fixtureFile{path: "maps/wide.tnt", data: "placeholder"},
@@ -87,7 +87,7 @@ func TestMapReadCapIsProfileData(t *testing.T) {
 	}
 
 	raised := RetailLimits()
-	raised.TNTBytes = 64 << 20
+	raised.TNTBytes = 2 * RetailTNTBytes
 	maps, _, err := compileMapsWithDiagnostics(fs, raised, nil)
 	if err != nil {
 		t.Fatalf("raised map read cap: %v", err)
@@ -146,7 +146,7 @@ func bigLOSFixture(tables int, padTo int) []byte {
 // ninety-table file is read the way a nine-table one is.
 func TestLOSReadCapIsProfileDataAndLargeTablesCompile(t *testing.T) {
 	const tables = 90
-	body := bigLOSFixture(tables, 1<<20+4096) // past the 1 MiB retail cap
+	body := bigLOSFixture(tables, int(RetailLOSBytes)+4096) // past the baseline cap
 	inner := newFixtureFS(t, fixtureFile{path: "gamedata/los.tdf", data: "placeholder"})
 	fs := newOversizeFS(inner, "gamedata/los.tdf", body)
 
@@ -162,7 +162,7 @@ func TestLOSReadCapIsProfileDataAndLargeTablesCompile(t *testing.T) {
 	}
 
 	raised := RetailLimits()
-	raised.LOSBytes = 8 << 20
+	raised.LOSBytes = 2 * RetailLOSBytes
 	lt, err := CompileLOSTables(fs, raised)
 	if err != nil {
 		t.Fatalf("raised battle-table read cap: %v", err)
@@ -196,7 +196,7 @@ func TestLOSReadCapIsProfileDataAndLargeTablesCompile(t *testing.T) {
 // are read under the same cap as the LOS table, so a content set that raises
 // one raises both.
 func TestMeteorReadCapSharesTheBattleTableCap(t *testing.T) {
-	body := append([]byte("[Default]\n{\n\tMeteorWeapon=rock;\n\tMeteorRadius=5;\n\tMeteorDensity=1;\n\tMeteorDuration=2;\n\tMeteorInterval=3;\n}\n"), make([]byte, 1<<20)...)
+	body := append([]byte("[Default]\n{\n\tMeteorWeapon=rock;\n\tMeteorRadius=5;\n\tMeteorDensity=1;\n\tMeteorDuration=2;\n\tMeteorInterval=3;\n}\n"), make([]byte, RetailLOSBytes)...)
 	for i := len("[Default]\n{\n\tMeteorWeapon=rock;\n\tMeteorRadius=5;\n\tMeteorDensity=1;\n\tMeteorDuration=2;\n\tMeteorInterval=3;\n}\n"); i < len(body); i++ {
 		body[i] = ' '
 	}
@@ -207,7 +207,7 @@ func TestMeteorReadCapSharesTheBattleTableCap(t *testing.T) {
 		t.Fatalf("retail battle-table cap on meteor.tdf = %v, want the overlay's read-limit error", err)
 	}
 	raised := RetailLimits()
-	raised.LOSBytes = 8 << 20
+	raised.LOSBytes = 2 * RetailLOSBytes
 	md, err := CompileMeteor(fs, raised)
 	if err != nil {
 		t.Fatalf("raised battle-table read cap: %v", err)

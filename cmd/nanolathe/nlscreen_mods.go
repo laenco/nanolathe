@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"image/color"
+	"strings"
 	"sync"
 	"time"
 
@@ -155,7 +156,7 @@ func (s *nlScreen) drawCatalog(screen *ebiten.Image) {
 	u := s.u()
 	screenkit.Fill(screen, screenkit.Rect{W: s.w(), H: s.h()}, color.RGBA{0, 0, 0, 160})
 	s.hits.Add(screenkit.Region{ID: "catalog-block", Rect: screenkit.Rect{W: s.w(), H: s.h()}})
-	w, h := 860*u, 600*u
+	w, h := 860*u, 700*u
 	r := screenkit.Rect{X: s.w()/2 - w/2, Y: s.h()/2 - h/2, W: w, H: h}
 	s.well(screen, r, 1)
 	df, bf := s.fonts.Display, s.fonts.Body
@@ -166,24 +167,43 @@ func (s *nlScreen) drawCatalog(screen *ebiten.Image) {
 	c.mu.Unlock()
 	bf.Draw(screen, status, r.X+32*u, r.Y+80*u, screenkit.Style{Size: 12 * u, Top: nlBody})
 	job := modDownload.view()
-	rowH := 76 * u
-	y := r.Y + 100*u
-	for i, e := range entries {
-		rr := screenkit.Rect{X: r.X + 28*u, Y: y, W: w - 56*u, H: rowH - 8*u}
-		if rr.Y+rr.H > r.Y+h-80*u {
-			break
-		}
+	// Rows fill the space above Close; more mods than fit scroll, with the
+	// scrollbar beside the rows.
+	rowH := 84 * u
+	list := screenkit.Rect{X: r.X + 28*u, Y: r.Y + 100*u, W: w - 56*u, H: h - 180*u}
+	shown := min(len(entries), max(1, int(list.H/rowH)))
+	if shown < len(entries) {
+		list.W -= 50 * u
+	}
+	list.H = float64(shown) * rowH
+	s.catalogScroll.layout(len(entries), shown, list)
+	y := list.Y
+	for i := s.catalogScroll.top; i < s.catalogScroll.top+shown; i++ {
+		e := entries[i]
+		rr := screenkit.Rect{X: list.X, Y: y, W: list.W, H: rowH - 8*u}
 		screenkit.Fill(screen, rr, color.RGBA{8, 12, 8, 220})
 		screenkit.Outline(screen, rr, 1*u, color.RGBA{50, 60, 46, 255})
 		tw := df.Draw(screen, e.Name, rr.X+16*u, rr.Y+28*u, screenkit.Style{Size: 18 * u, Tracking: 0.03, Top: nlCream})
 		bf.Draw(screen, fmt.Sprintf("%s  ·  %.1f MB", e.Version, float64(e.Archive.Size)/1e6), rr.X+26*u+tw, rr.Y+27*u, screenkit.Style{Size: 11 * u, Top: nlDim})
-		summary := e.Summary
-		if len(summary) > 110 {
-			summary = summary[:107] + "…"
-		}
-		bf.Draw(screen, summary, rr.X+16*u, rr.Y+52*u, screenkit.Style{Size: 11 * u, Top: nlBody})
-		// Right side: installed, the running download, or a button.
+		// Right side: installed, the running download, or a button. The
+		// summary wraps in the room left of it, cut on its second line.
 		bx := rr.X + rr.W - 170*u
+		st := screenkit.Style{Size: 11 * u, Top: nlBody}
+		room := bx - 16*u - (rr.X + 16*u)
+		lines := s.ui.wrap(bf, e.Summary, st, room)
+		st.Verbatim = true // the wrapped lines are translated already
+		for li, line := range lines[:min(2, len(lines))] {
+			if li == 1 && len(lines) > 2 {
+				line = s.ui.text(nlTextKey{kind: "catalog summary cut", a: e.Summary, i: int(room)}, func() string {
+					runes := []rune(line)
+					for len(runes) > 1 && bf.Measure(string(runes)+"…", st) > room {
+						runes = runes[:len(runes)-1]
+					}
+					return strings.TrimSpace(string(runes)) + "…"
+				})
+			}
+			bf.Draw(screen, line, rr.X+16*u, rr.Y+52*u+float64(li)*16*u, st)
+		}
 		installed := modInstalled(s.mods, e)
 		switch {
 		case installed:
@@ -212,6 +232,7 @@ func (s *nlScreen) drawCatalog(screen *ebiten.Image) {
 		}
 		y += rowH
 	}
+	s.drawScrollbar(screen, "catalog", &s.catalogScroll, list)
 	if job.outcome != "" {
 		bf.Draw(screen, job.outcome, r.X+32*u, r.Y+h-44*u, screenkit.Style{Size: 12 * u, Top: nlAmber})
 	}

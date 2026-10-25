@@ -446,7 +446,7 @@ func (e *Economy) evalGate(b *core.Board, u *aikit.OwnUnit, p *aikit.UnitInfo) c
 		st.why[whyHave]++
 		return c
 	}
-	if u.Info.Role.Has(aikit.RoleCommander) && aikit.Dist2(c.x, c.z, b.HomeX, b.HomeZ) > int64(s.p.ComRadius)*int64(s.p.ComRadius) {
+	if u.Info.Role.Has(aikit.RoleCommander) && s.comOff(b, c.x, c.z) {
 		st.why[whyLeash]++
 		return c
 	}

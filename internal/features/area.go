@@ -147,6 +147,20 @@ func reclaimPayoutTarget(t *world.Terrain, cx, cz int) (ax, az int, def *content
 // sequence out and the feature phase stamps the successor when it ends, while
 // one naming none still replaces at once (step 3). The payout itself is
 // unchanged either way, and lands on the same visit it always did.
+//
+// TODO(question): while a sprite feature plays its reclaim sequence the cell
+// keeps the reclaimable definition. A second reclaim order whose recorded
+// position is a fringe cell of a multi-cell sprite passes the guard above,
+// because that unhopped cell's instance-attached bit stays clear, so it is
+// paid the anchor definition's pools again while transitionFeatureAt drops
+// its transition. Whether retail credits that second reclaimer is
+// unconfirmed: a manual retail observation of two builders finishing one
+// multi-cell tree or rock inside its reclaim sequence, the second ordered on
+// a fringe cell, comparing both builders' production, or a static trace for
+// any further refusal on the payout path, would settle it
+// [05 R-FEAT-01 §15][05 R-WORK-01 §5][05 "Missing and unknown"]. Strict keeps
+// the researched guard. Modern patrol never selects an animating feature
+// (DESIGN_UNITS_ORDERS_COB "Smarter patrol — 2026-10-22").
 func (s *Service) ReclaimAt(cx, cz int) (metal, energy float32, ok bool) {
 	if s == nil || s.Terrain == nil {
 		return 0, 0, false

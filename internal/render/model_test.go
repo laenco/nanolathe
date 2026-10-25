@@ -352,21 +352,43 @@ func TestLeafAttachmentEmit(t *testing.T) {
 	}
 }
 
-func TestBuildPieceDrawsSuppressesHiddenAncestors(t *testing.T) {
-	m := &model.Model{
-		Root: 0,
-		Pieces: []model.Piece{
-			{Name: "root", Parent: -1, Children: []int{1}},
-			{Name: "child", Parent: 0, Vertices: [][3]numeric.Fixed{{0, 0, 0}}, Children: nil},
-		},
-	}
-	states := []model.PieceState{{Hidden: true}, {}}
-	draws := pieceDraws(m, states, [3]numeric.Fixed{}, false)
-	if len(draws) != 2 {
-		t.Fatalf("piece count %d want 2", len(draws))
-	}
-	if len(draws[0].WorldVertices) != 0 || len(draws[1].WorldVertices) != 0 {
-		t.Fatalf("hidden ancestor leaked geometry: root=%d child=%d", len(draws[0].WorldVertices), len(draws[1].WorldVertices))
+// Visibility is local to a piece; transforms still pass through hidden
+// ancestors [03 §2.4.1]. Exercise both the eager classic and deferred modern
+// paths, and both cached/live membership below the hidden transform node.
+func TestHiddenParentKeepsVisibleChildGeometry(t *testing.T) {
+	m := &model.Model{Root: 0, Pieces: []model.Piece{
+		{Name: "marker", Parent: -1, Children: []int{1}, Translate: [3]numeric.Fixed{3 << 16, 0, 0}, Vertices: [][3]numeric.Fixed{{0, 0, 0}}},
+		{Name: "body", Parent: 0, Children: []int{2}, Translate: [3]numeric.Fixed{0, 5 << 16, 0}, Vertices: [][3]numeric.Fixed{{0, 0, 0}, {1 << 16, 0, 0}, {0, 1 << 16, 0}}, Primitives: []model.Primitive{{VertexIndices: []uint16{0, 1, 2}, IsColored: 1}}},
+		{Name: "tip", Parent: 1, Vertices: [][3]numeric.Fixed{{0, 0, 0}}},
+	}}
+	for _, deferred := range []bool{false, true} {
+		for _, live := range []bool{false, true} {
+			states := []model.PieceState{{Hidden: true, Trans: [3]numeric.Fixed{2 << 16, 0, 0}}, {DontCache: live}, {Hidden: true}}
+			build := BuildUnitDrawInto
+			if deferred {
+				build = BuildUnitDrawDeferredInto
+			}
+			draw := build(m, states, 0, 0, 0, frame.UnitView{}, nil, &DrawScratch{})
+			if !draw.HasFaces() {
+				t.Fatalf("deferred=%v live=%v: hidden parent suppressed the child's faces", deferred, live)
+			}
+			lane := PieceLaneCached
+			if live {
+				lane = PieceLaneLive
+			}
+			draw.Materialize(lane)
+			if len(draw.Pieces[0].WorldVertices) != 0 || len(draw.Pieces[2].WorldVertices) != 0 {
+				t.Fatal("a piece's own hide state did not suppress its geometry")
+			}
+			body := draw.Pieces[1]
+			if len(body.Primitives) != 1 || len(body.WorldVertices) != 3 || body.DontCache != live {
+				t.Fatalf("visible child's geometry/cache lane = %+v", body)
+			}
+			// Parent authored and script translations both survive its hide.
+			if got, want := body.WorldVertices[0], ([3]numeric.Fixed{5 << 16, 5 << 16, 0}); got != want {
+				t.Fatalf("child world origin=%v want %v", got, want)
+			}
+		}
 	}
 }
 

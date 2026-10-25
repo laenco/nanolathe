@@ -136,11 +136,12 @@ func TestStockOTAWallAnchorsAreCentreReferencedRetail(t *testing.T) {
 
 // Across the whole stock corpus, a mission `[features]` record that resolves
 // to a definition and whose anchor is inside the map either produces a live
-// feature or is refused by one of the stamp's OWN two rules: a footprint that
-// leaves the plot, or an indestructible feature under a covered cell
-// [05 R-FEAT-01 §3][05 R-FEAT-01 §3-A]. Nothing may be lost to the edge/lava
-// void sweep, because the loader runs this pass before that sweep
-// [02 R-MAP-01 §6][03 R-TERR-01 §2].
+// feature or is refused by one of the stamp's OWN three rules: a footprint that
+// leaves the plot, a covered cell holding a map-authored void, or an
+// indestructible feature under a covered cell
+// [03 R-TERR-01 §1 "Feature stamping order"][05 R-FEAT-01 §3][05 R-FEAT-01 §3-A].
+// Nothing may be lost to the edge/lava void sweep, because the loader runs this
+// pass before that sweep [02 R-MAP-01 §6][03 R-TERR-01 §2].
 //
 // The census also requires the ordering to be load-bearing: at least one stock
 // record must cover a cell the load-time sweep converted, and those covered
@@ -249,10 +250,15 @@ func TestStockOTAFeaturesSurviveTheVoidSweepRetail(t *testing.T) {
 		placedTotal, overSweptPlacements, overSweptCells)
 }
 
-// stampRefusedByItsOwnRules reports whether the stamp's two refusals — a
-// footprint leaving the plot, or an indestructible feature under a covered
-// cell, reached through the fringe hop — explain a missing anchor
-// [05 R-FEAT-01 §3][05 R-FEAT-01 §3-A].
+// stampRefusedByItsOwnRules reports whether the stamp's three refusals — a
+// footprint leaving the plot, a covered cell holding a map-authored void, or
+// an indestructible feature under a covered cell, reached through the fringe
+// hop — explain a missing anchor [05 R-FEAT-01 §3][05 R-FEAT-01 §3-A].
+//
+// The authored void is the TNT's own sentinel, stamped before any live
+// feature, so a footprint over it is vetoed and the void wins
+// [03 R-TERR-01 §1 "Feature stamping order"]. The edge/lava sweep's word,
+// PlotFeatureVoid, explains nothing: the pass runs before the sweep.
 func stampRefusedByItsOwnRules(t *world.Terrain, ax, az int32, def *content.FeatureDef) bool {
 	footX, footZ := def.FootprintX, def.FootprintZ
 	if footX <= 0 || footZ <= 0 {
@@ -265,6 +271,9 @@ func stampRefusedByItsOwnRules(t *world.Terrain, ax, az int32, def *content.Feat
 		for dx := int32(0); dx < footX; dx++ {
 			cell := t.PlotAt(ax+dx, az+dz)
 			if cell == nil {
+				return true
+			}
+			if cell.IsVoid() && cell.Feature() != world.PlotFeatureVoid {
 				return true
 			}
 			bx, bz := ax+dx, az+dz

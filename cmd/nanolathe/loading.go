@@ -277,6 +277,28 @@ func (g *gameShell) loadRetailSavePath(path string) error {
 		if modPlan.switchTo != "" {
 			return g.switchModForLoad(path, modPlan, selection)
 		}
+		// A battle on a generated map loads on that map, made again from
+		// its recipe when it is not mounted (DESIGN_MAP_GENERATOR §10).
+		if len(sidecar.GeneratedMap) != 0 {
+			made, err := g.recoverGeneratedMap(sidecar.GeneratedMap)
+			if err != nil {
+				return err
+			}
+			switch {
+			case made == nil:
+			case g.opts.Map != "":
+				return refuseLoad("This game was played on a generated map that is not loaded. Start Nanolathe without --map to load it")
+			case g.battle != nil:
+				// Leaving the battle first is the reload's work, as for a
+				// game saved under another mod.
+				g.keepGeneratedMap(made)
+				return g.switchModForLoad(path, sidecarModPlan{switchTo: g.cs.modSelector(), selection: g.runningModSelection()}, selection)
+			default:
+				if err := g.mountGeneratedMap(made); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	sim, crt := seedsFor(g.opts)
 	// Strict sizes a restored skirmish from the configured limit [05 R-SHARE-01 §7].
@@ -296,12 +318,17 @@ func (g *gameShell) loadRetailSavePath(path string) error {
 		deps.Restrictions = selection.restrictions
 		deps.EntryCommunity = &selection.entry.Entry
 		deps.UnitLimit = sidecar.UnitLimit
+		deps.AlliedSight = sidecar.AlliedSight
 		// The Modern AI controllers resume their generators (DESIGN_SESSIONS_AI_SAVE
 		// "Modern AI computer player").
 		if deps.AIControllers, err = session.SidecarAIControllers(sidecar.AI); err != nil {
 			return err
 		}
 		if err := validateRecordedAIOverrides(deps.AIControllers); err != nil {
+			return err
+		}
+		// A Survival battle's wave director (docs/DESIGN_SURVIVAL.md §11).
+		if deps.Survival, err = session.SidecarSurvival(sidecar.Survival); err != nil {
 			return err
 		}
 	}
@@ -313,12 +340,17 @@ func (g *gameShell) loadRetailSavePath(path string) error {
 		if err := continuationRestrictionsRefusal(selection); err != nil {
 			return err
 		}
-		if err := g.applyRetailContinuation(loaded.Continuation); err != nil {
+		var sources *session.CommunitySources
+		if hasSidecar {
+			sources = &selection.sources
+		}
+		if err := g.applyRetailContinuation(loaded.Continuation, sources); err != nil {
 			return err
 		}
 		// A continuation starts the next mission fresh, so what it takes
 		// from its sidecar is the selection that mission is entered under:
-		// the mutators, the rule set and the unit limit.
+		// the mutators, the rule set and the unit limit. The briefing's
+		// Start action retains the recorded Community sources (§7.3).
 		if hasSidecar {
 			g.setup.UnitLimit = sidecar.UnitLimit
 			g.selectFromSidecar(selection, modPlan.selection, nil)
@@ -329,6 +361,10 @@ func (g *gameShell) loadRetailSavePath(path string) error {
 		return fmt.Errorf("nanolathe: retail save load returned no battle candidate")
 	}
 	sess := loaded.Battle.Session
+	survivalBest, err := restoreSurvivalBest(sidecar.SurvivalBest, sess, g.cs.fs)
+	if err != nil {
+		return err
+	}
 	var campaign *campaignSelection
 	if sess.Mission != nil && sess.Mission.Type == mission.TypeCampaign {
 		side, known := sess.SideForOwner(int(sess.LocalOwner))
@@ -348,6 +384,7 @@ func (g *gameShell) loadRetailSavePath(path string) error {
 	if err != nil {
 		return err
 	}
+	battle.survivalBest = survivalBest
 	// A restored save adopts on the render thread with no loader goroutine,
 	// so the remaster runs inline here and the restore blocks on it. The cache
 	// makes that a file read for any map loaded before; a cold cache costs the
@@ -379,6 +416,9 @@ func (g *gameShell) loadRetailSavePath(path string) error {
 		g.installCampaignSelection(*campaign)
 	}
 	g.importedRetailBattle = true
+	// The post-battle return goes to the setup screen the saved battle came
+	// from: Survival's for a restored Survival battle.
+	g.lastBattleSurvival = sess.IsSurvival()
 	if hasSidecar {
 		g.selectFromSidecar(selection, modPlan.selection, sess)
 	}

@@ -256,6 +256,44 @@ func TestFleetLightBoats(t *testing.T) {
 // (0.55 at minute 12, 0.75 by 20) per finished extractor, plus at most two
 // for claimable spots; the factory cap is two from minute 8 or one per
 // 14 metal/s, and only while investing is safe.
+// Long-game fallback: the lower personas keep their tier caps in a short
+// game, then start the growth shape too. This is Nanolathe Modern policy:
+// a 35%-ambition ally otherwise never expands or techs in a three-hour
+// battle.
+func TestGrowthLongGameFallback(t *testing.T) {
+	// The shipped Growth value is the constructor floor only. Before the
+	// fallback a medium persona must not expand or tech; after it the
+	// fallback supplies parts 1/2/4/8 without changing the configured bits.
+	s := &shared{p: Params{Growth: gConsFloor, LongGrowth: 1}, k: &aikit.Kit{Persona: aikit.PersonaMed}}
+	s.mCap, s.mStock = 1000, 900 // banking
+	s.tick = (growthFallbackMinute - 1) * 1800
+	if s.part(gExpand) || s.part(gTech) || s.part(gConstructors) || s.part(gFactories) {
+		t.Error("medium growth acted before the fallback minute")
+	}
+	s.tick = growthFallbackMinute * 1800
+	if !s.part(gExpand) || !s.part(gTech) || !s.part(gConstructors) || !s.part(gFactories) {
+		t.Error("medium growth did not receive the fallback parts at the fallback minute")
+	}
+	// Only metal the lower plan is not spending: with the store below
+	// capLiftPercent the fallback waits.
+	s.mStock = 500
+	if s.part(gExpand) || s.part(gFactories) {
+		t.Error("the fallback acted without a banking metal store")
+	}
+	s.mStock = 900
+	if s.part(gConsFloor) != true {
+		t.Error("the configured constructor floor disappeared")
+	}
+	s.p.LongGrowth = 0
+	if s.part(gExpand) {
+		t.Error("long_growth=0 acted at the fallback minute")
+	}
+	s.p.Growth = 0
+	if s.part(gConsFloor) || s.part(gExpand) {
+		t.Error("growth=0 acted at the fallback minute")
+	}
+}
+
 func TestGrowthTargets(t *testing.T) {
 	k := &aikit.Kit{Persona: aikit.PersonaHard}
 	s := &shared{p: Params{Growth: gConstructors | gFactories, SpotsPerCon: 3}, k: k}
@@ -279,6 +317,11 @@ func TestGrowthTargets(t *testing.T) {
 	if s.factoryFull() {
 		t.Error("two factories at 42 metal/s: room for a third")
 	}
+	s.blockedFacs = 2
+	if !s.factoryFull() {
+		t.Error("stalled pads did not stop another factory")
+	}
+	s.blockedFacs = 0
 	s.mInc, s.armyRatio = 20000, 1500
 	if s.factoryFull() {
 		t.Error("behind in army: the cap does not bind")
@@ -368,5 +411,15 @@ func TestConstructorFloor(t *testing.T) {
 		if got := s.consFloor(); got != c.want {
 			t.Errorf("minute %d: floor %d, want %d", c.min, got, c.want)
 		}
+	}
+}
+
+func TestPadLaneCoversShortExit(t *testing.T) {
+	f := &aikit.OwnUnit{X: 1000, Z: 1000, Info: &aikit.UnitInfo{FootX: 6, FootZ: 6}}
+	if !onPadLane(f, 1000, 1050) || !onPadLane(f, 940, 1040) {
+		t.Error("short exit lane did not cover the pad front")
+	}
+	if onPadLane(f, 1000, 1000) || onPadLane(f, 1000, 1120) {
+		t.Error("pad lane covered the footprint or the far lane")
 	}
 }

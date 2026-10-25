@@ -106,6 +106,22 @@ func (a *Army) support(b *core.Board) {
 			continue
 		}
 		one[0] = u.H
+		if ward >= 0 && !u.Info.Def.CanGuard {
+			// A definition authored canguard=0 refuses Guard (code 7): it
+			// follows the main squad by moving to its ward once it has
+			// stopped away from it, instead of a refused order every retry.
+			w := &o.Own[ward]
+			if u.Order != aikit.OrderIdle || aikit.Dist2(u.X, u.Z, w.X, w.Z) <= supportStray*supportStray {
+				continue
+			}
+			if !a.spend(false) {
+				return
+			}
+			k.Move(one[:], w.X, w.Z, false)
+			m.ward, m.wardGen, m.tick = w.H, w.Gen, b.Tick
+			a.supportOrders++
+			continue
+		}
 		if ward >= 0 {
 			if u.Order == aikit.OrderGuard && a.keepsWard(b, main, m) {
 				continue

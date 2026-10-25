@@ -166,7 +166,7 @@ func (q *Queue) recordDiagnostic(msg string) {
 // unlinked before cleanup, which may append more work to the chain being
 // drained [04 §3.3][04 R-MOV-03 §6].
 func (q *Queue) cancelAll() {
-	q.patrolWorkPaused = false
+	q.patrolWork = patrolWorkState{}
 	var head *Node
 	if len(q.primary) != 0 {
 		head = q.primary[0]
@@ -294,7 +294,7 @@ func (q *Queue) PurgeUnprotected() {
 	if q == nil {
 		return
 	}
-	q.patrolWorkPaused = false
+	q.patrolWork = patrolWorkState{}
 	if observer := q.checkpointObserver; observer != nil {
 		observer.RecordCheckpointOrder(CheckpointOrderReceipt{Kind: 1})
 	}
@@ -476,7 +476,7 @@ func (q *Queue) push(id ID, n Node) bool {
 		return false
 	}
 	if !queued && node.StaticGate&(staticRearSegment|staticHeadInsert) == 0 {
-		q.patrolWorkPaused = false
+		q.patrolWork = patrolWorkState{}
 	}
 	// "Issuing a front-segment record drops leading auto/default records (those
 	// carrying the auto-op flag) wherever they live" [04 §3.3]. Push is the

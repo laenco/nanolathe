@@ -406,12 +406,22 @@ func TestModernConstructorPatrolPaymentRefusalRetail(t *testing.T) {
 	}
 }
 
+// A moving patient that leaves the sight circle around the acquisition
+// point abandons the job as a failure (DESIGN_UNITS_ORDERS_COB "Smarter
+// patrol — 2026-10-22"): no return trip, the patient is remembered until the
+// next waypoint, and other work beside the acquisition point is borrowed.
 func TestModernConstructorPatrolMovingTargetAbandonsRetail(t *testing.T) {
 	for _, key := range []string{"armcv", "armca"} {
 		t.Run(key, func(t *testing.T) {
 			f := newConstructorPatrolRuntime(t, key, 2, nil)
-			// This initial target is inside the old corridor too, isolating
-			// the acquisition-anchored pursuit rule from the selection change.
+			// Keep the first route leg in the locally exercised corridor, so the
+			// recovery below reaches a waypoint within the observation window.
+			f.route[0].GoalX = numeric.FixedFromInt(1000)
+			f.route[0].GoalZ = numeric.FixedFromInt(584)
+			f.route[0].GoalY = f.s.World.HeightAt(f.route[0].GoalX, f.route[0].GoalZ)
+			f.goals[0] = constructorPatrolPoint{f.route[0].GoalX, f.route[0].GoalY, f.route[0].GoalZ}
+			// The patient is stationary when it is selected: a moving one would
+			// be skipped outside build range.
 			x, z := f.helper.X+numeric.FixedFromInt(40), numeric.FixedFromInt(664)
 			target := placeCompleteRetailUnit(t, f.s, "armflash", 0, x, z)
 			target.Health = target.Def.MaxDamage / 2
@@ -438,8 +448,16 @@ func TestModernConstructorPatrolMovingTargetAbandonsRetail(t *testing.T) {
 			if f.q.Head() != nil && f.q.Head().Target == target.Handle {
 				t.Fatalf("still pursuing outside acquisition circle: outside=%d now=%d", outside, f.s.Clock.GlobalTick)
 			}
-			// Eligible fresh work beside the saved acquisition point must not
-			// restart the failure loop while returning or travelling to a waypoint.
+			if !f.constructorPatrolRemembered(1, uint32(target.Handle)) {
+				t.Fatal("abandoned patient was not remembered")
+			}
+			for _, n := range f.q.Primary() {
+				if n.IsPatrolReturn() {
+					t.Fatal("failed pursuit kept its saved-position return")
+				}
+			}
+			// Eligible fresh work beside the saved acquisition point is borrowed
+			// without a return trip, and the remembered patient is not.
 			def, _ := f.s.Catalog.Unit("armsolar")
 			h, err := f.s.Units.CreateNanoframe(def, 0, anchor.x+numeric.FixedFromInt(60), f.s.World.HeightAt(anchor.x+numeric.FixedFromInt(60), anchor.z-numeric.FixedFromInt(40)), anchor.z-numeric.FixedFromInt(40))
 			if err != nil {
@@ -448,39 +466,40 @@ func TestModernConstructorPatrolMovingTargetAbandonsRetail(t *testing.T) {
 			decoy := f.s.Units.Unit(h)
 			decoy.Remaining, decoy.Health = .02, int32(float32(def.MaxDamage)*.98)
 			f.s.Movement.EnsureUnit(decoy)
-			var returnNode *orders.Node
-			var arrived, resumed, travelled bool
-			var resumePosition constructorPatrolPoint
-			for i := 0; i < 700; i++ {
-				beforeHead := f.q.Head()
+			borrowed := false
+			for i := 0; i < 700 && !borrowed; i++ {
 				f.step()
 				f.assertRetained()
 				head := f.q.Head()
-				if head != nil && head.Target != 0 {
-					t.Fatalf("borrowed another job before reaching a retained waypoint: %s target=%d", constructorPatrolName(head), head.Target)
+				if head != nil && (head.IsPatrolReturn() || head.Target == target.Handle) {
+					t.Fatalf("failed pursuit returned or re-borrowed the patient: %s", constructorPatrolName(head))
 				}
-				for _, n := range f.q.Primary() {
-					name := constructorPatrolName(n)
-					if n != f.successor && (name == "Move_Ground" || name == "VTOL_Move") {
-						returnNode = n
-						if (constructorPatrolPoint{n.GoalX, n.GoalY, n.GoalZ}).distanceSquared(anchor) > 24*24 {
-							t.Fatal("failed pursuit did not return to acquisition position")
-						}
-					}
+				borrowed = head != nil && head.Target == decoy.Handle
+			}
+			if !borrowed {
+				t.Fatalf("fresh work beside the acquisition point was not borrowed: head=%s pos=(%d,%d)", constructorPatrolName(f.q.Head()), f.helper.X.Floor(), f.helper.Z.Floor())
+			}
+			// Only a genuine waypoint arrival forgets the patient.
+			recovered := false
+			for i := 0; i < 3000 && !recovered; i++ {
+				f.step()
+				f.assertRetained()
+				if head := f.q.Head(); head != nil && head.IsPatrolReturn() {
+					t.Fatal("a job end started a return trip")
 				}
-				arrived = arrived || returnNode != nil && (head == returnNode || beforeHead == returnNode) && constructorPatrolPosition(f.helper).distanceSquared(anchor) <= 24*24
-				if constructorPatrolName(head) == f.patrol && arrived {
-					if !resumed {
-						resumed, resumePosition = true, constructorPatrolPosition(f.helper)
+				if !f.constructorPatrolRemembered(1, uint32(target.Handle)) {
+					atWaypoint := false
+					for _, p := range f.goals {
+						atWaypoint = atWaypoint || constructorPatrolPosition(f.helper).distanceSquared(p) <= 48*48
 					}
-					if resumePosition.distanceSquared(constructorPatrolPosition(f.helper)) >= 64*64 {
-						travelled = true
-						break
+					if !atWaypoint {
+						t.Fatalf("patient forgotten away from a waypoint at (%d,%d)", f.helper.X.Floor(), f.helper.Z.Floor())
 					}
+					recovered = true
 				}
 			}
-			if returnNode == nil || !arrived || !travelled || decoy.Remaining < .02 {
-				t.Fatalf("failed pursuit did not return and travel with work paused: return=%v arrival=%v travel=%v decoy=%g", returnNode != nil, arrived, travelled, decoy.Remaining)
+			if !recovered {
+				t.Fatalf("never reached a patrol waypoint after the abandoned pursuit; position=(%d,%d) head=%s", f.helper.X.Floor(), f.helper.Z.Floor(), constructorPatrolName(f.q.Head()))
 			}
 		})
 	}
@@ -502,6 +521,14 @@ func TestModernConstructorPatrolCarriedFactoryProductRetail(t *testing.T) {
 	for _, key := range []string{"armcv", "armca"} {
 		t.Run(key, func(t *testing.T) {
 			f := newConstructorPatrolRuntime(t, key, 2, nil)
+			if !f.helper.Def.CanFly {
+				// A short ground leg past the factory, so the factory memory's
+				// waypoint recovery below is reached within the observation window.
+				f.route[0].GoalX = numeric.FixedFromInt(1100)
+				f.route[0].GoalZ = numeric.FixedFromInt(584)
+				f.route[0].GoalY = f.s.World.HeightAt(f.route[0].GoalX, f.route[0].GoalZ)
+				f.goals[0] = constructorPatrolPoint{f.route[0].GoalX, f.route[0].GoalY, f.route[0].GoalZ}
+			}
 			factoryX := f.helper.X + numeric.FixedFromInt(240)
 			if f.helper.Def.CanFly {
 				factoryX = numeric.FixedFromInt(1200)
@@ -532,35 +559,74 @@ func TestModernConstructorPatrolCarriedFactoryProductRetail(t *testing.T) {
 			if paid.carried == 0 {
 				t.Fatalf("no paid assistance while product was actually carried: %+v", paid)
 			}
-			// Start the next production batch only after real return and route
-			// travel. A successful borrow may otherwise acquire the next product
-			// immediately, which would make uninterrupted patrol travel an
-			// invalid requirement. This gap uses ordinary factory commands.
+			// A successful assist remembers the factory until the next genuine
+			// waypoint arrival (DESIGN_UNITS_ORDERS_COB "Smarter patrol —
+			// 2026-10-22"), so a route past a producing factory never turns the
+			// helper into its guard, while each lap still assists it.
+			if !f.constructorPatrolRemembered(3, uint32(factory.Handle)) {
+				t.Fatalf("successful product assist did not remember its factory: %+v", f.q.PatrolWorkTrace())
+			}
+			// The fixture's queued successor sits between the two waypoints;
+			// drop it so the next lap passes the factory again.
+			f.q.RemovePrimaryNode(f.successor, true)
 			if err := f.s.EnqueueHumanCommand(HumanCommand{Kind: HumanFactoryBuild, FactoryBuild: HumanFactoryBuildCommand{Builder: factory.Handle, Product: "armflash", Count: 3}}); err != nil {
 				t.Fatal(err)
 			}
 			var next *units.Unit
-			for i := 0; i < 1200; i++ {
+			forgotten := false
+			for i := 0; i < 3000; i++ {
 				f.step()
+				if !forgotten && !f.constructorPatrolRemembered(3, uint32(factory.Handle)) {
+					for _, p := range f.goals {
+						forgotten = forgotten || constructorPatrolPosition(f.helper).distanceSquared(p) <= 48*48
+					}
+					if !forgotten {
+						t.Fatalf("factory forgotten away from a waypoint at (%d,%d)", f.helper.X.Floor(), f.helper.Z.Floor())
+					}
+				}
 				head := f.q.Head()
 				if head != nil && head.Target != 0 && head.Target != first.Handle {
 					product := f.s.Units.Unit(head.Target)
 					if product != nil && product.Attachment.Carrier == factory.Handle && product.Remaining != 0 {
+						if !forgotten {
+							t.Fatal("assisted the remembered factory again before a waypoint")
+						}
 						next = product
 						break
 					}
 				}
 			}
 			if next == nil {
-				t.Fatal("patrol did not reacquire real production after a product completion/gap")
+				t.Fatalf("patrol did not reacquire real production after a waypoint: forgotten=%v pos=(%d,%d) head=%s", forgotten, f.helper.X.Floor(), f.helper.Z.Floor(), constructorPatrolName(f.q.Head()))
 			}
+			// The reacquired product may finish before an aircraft arrives, so the
+			// helper's paid visits count against any product this factory carries.
 			selected := f.s.Clock.GlobalTick
-			second := f.observeWork(next)
-			for i := 0; i < 500 && second.carried == 0; i++ {
+			second := &constructorPatrolPayment{}
+			work := f.q.Binding().Work
+			assist := work.AssistHook()
+			work.SetAssist(func(builder *units.Unit, n *orders.Node, tick uint32) bool {
+				before := *f.s.Econ.UnitBuckets(builder.Handle)
+				product := f.s.Units.Unit(n.Target)
+				var fraction float32
+				if product != nil {
+					fraction = product.Remaining
+				}
+				carried := product != nil && product.Attachment.Carrier == factory.Handle
+				result := assist(builder, n, tick)
+				if builder == f.helper && carried && product.Remaining < fraction {
+					after := f.s.Econ.UnitBuckets(builder.Handle)
+					second.carried++
+					second.metal += after[economy.Metal].Accepted - before[economy.Metal].Accepted
+					second.energy += after[economy.Energy].Accepted - before[economy.Energy].Accepted
+				}
+				return result
+			})
+			for i := 0; i < 800 && second.carried == 0; i++ {
 				f.step()
 			}
 			if second.carried == 0 || second.energy <= 0 || second.metal <= 0 {
-				t.Fatalf("next carried product received no paid assistance: %+v", second)
+				t.Fatalf("no carried product of the factory received paid assistance after the waypoint: %+v", second)
 			}
 			t.Logf("production resumed: selected=%d first=%d next=%d paid=%+v", selected, first.Handle, next.Handle, second)
 		})

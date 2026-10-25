@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -64,7 +65,11 @@ func parseLiveScene(text string) (liveScene, error) {
 			scene.Army = v
 		}
 	case "capture":
-		dir, copies, _ := strings.Cut(rest, ":")
+		// A Windows path opens with a volume, C:, whose colon is not the
+		// copies separator; elsewhere the volume is empty.
+		volume := filepath.VolumeName(rest)
+		dir, copies, _ := strings.Cut(rest[len(volume):], ":")
+		dir = volume + dir
 		if dir == "" {
 			return bad()
 		}

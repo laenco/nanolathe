@@ -29,6 +29,9 @@ func runNLScreenShot(opts Options, cs *contentSet) error {
 	if err := os.MkdirAll(opts.NLShot, 0o755); err != nil {
 		return fmt.Errorf("nanolathe: nl-shot: create %s: %w", opts.NLShot, err)
 	}
+	if opts.NLShotOnly == "generator" {
+		return runMapgenShot(opts, cs, w, h)
+	}
 	shell, err := newGameShell(opts, cs)
 	if err != nil {
 		return err

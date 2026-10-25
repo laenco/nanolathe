@@ -25,23 +25,31 @@ func patrolTraceProjection(t *testing.T, authored string) string {
 	return out.String()
 }
 
-// Return references, provenance, arrival and route-wide pause all affect future
-// patrol work. Default receipts must keep the existing partial parity stream.
+// Return references and provenance, the factory receipt and the failed-target
+// memory with its cadence all affect future patrol work. Default receipts must
+// keep the existing partial parity stream (DESIGN_UNITS_ORDERS_COB "Smarter
+// patrol — 2026-10-22").
 func TestPatrolTraceIncludesReturnAndRecoveryState(t *testing.T) {
 	base := patrolTraceProjection(t, `{"Orders":[{"ID":1}]}`)
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(base))); got != "6390244eb0625fd5868a451a2559feb77537459c879df19656fe421b180eac6e" {
 		t.Fatalf("default patrol receipts changed the pre-existing parity stream: %s", got)
 	}
-	if got := patrolTraceProjection(t, `{"patrolWorkPaused":false,"Orders":[{"ID":1,"workReturnOrdinal":0,"patrolReturn":false,"patrolReturnArrived":false}]}`); got != base {
+	if got := patrolTraceProjection(t, `{"Orders":[{"ID":1,"workReturnOrdinal":0,"patrolReturn":false,"workFactory":0}]}`); got != base {
 		t.Fatal("default patrol receipts changed the legacy parity stream")
 	}
 	states := []string{
-		`{"patrolWorkPaused":true,"Orders":[{"ID":1}]}`,
+		`{"patrolWork":{"ScanDue":15},"Orders":[{"ID":1}]}`,
+		`{"patrolWork":{"Next":1},"Orders":[{"ID":1}]}`,
+		`{"patrolWork":{"Entries":[{"Kind":2,"CX":3,"CZ":4}],"Next":1},"Orders":[{"ID":1}]}`,
+		`{"patrolWork":{"Entries":[{"Kind":2,"CX":4,"CZ":3}],"Next":1},"Orders":[{"ID":1}]}`,
+		`{"patrolWork":{"Entries":[{"Kind":1,"Handle":7}],"Next":1},"Orders":[{"ID":1}]}`,
+		`{"patrolWork":{"Entries":[{"Kind":3,"Handle":7}],"Next":1},"Orders":[{"ID":1}]}`,
+		`{"patrolWork":{"Entries":[{},{"Kind":3,"Handle":7}],"Next":1},"Orders":[{"ID":1}]}`,
 		`{"Orders":[{"ID":1,"workReturnOrdinal":2}]}`,
 		`{"Orders":[{"ID":1,"workReturnOrdinal":3}]}`,
 		`{"Orders":[{"ID":1,"workReturnOrdinal":-1}]}`,
 		`{"Orders":[{"ID":1,"patrolReturn":true}]}`,
-		`{"Orders":[{"ID":1,"patrolReturnArrived":true}]}`,
+		`{"Orders":[{"ID":1,"workFactory":5}]}`,
 	}
 	seen := []string{base}
 	for _, authored := range states {
@@ -95,33 +103,25 @@ func TestPatrolTraceProjectsLiveReturnAndRecovery(t *testing.T) {
 			}
 			s := &Session{}
 			borrowed := s.parityUnit(builder)
-			work, back := q.PrimaryAt(0), q.PrimaryAt(1)
-			if borrowed.PatrolWorkPaused || borrowed.Orders[0].WorkAssignmentOrdinal != 3 || borrowed.Orders[0].WorkReturnOrdinal != 2 ||
-				borrowed.Orders[1].WorkAssignmentOrdinal != 3 || !borrowed.Orders[1].PatrolReturn || borrowed.Orders[1].PatrolReturnArrived ||
+			work := q.PrimaryAt(0)
+			if borrowed.PatrolWork == nil || borrowed.PatrolWork.ScanDue != 115 || borrowed.PatrolWork.Entries[0].Kind != 0 ||
+				borrowed.Orders[0].WorkAssignmentOrdinal != 3 || borrowed.Orders[0].WorkReturnOrdinal != 2 ||
+				borrowed.Orders[1].WorkAssignmentOrdinal != 3 || !borrowed.Orders[1].PatrolReturn ||
 				borrowed.Orders[1].GoalX != builder.X.Raw() || borrowed.Orders[1].GoalY != builder.Y.Raw() || borrowed.Orders[1].GoalZ != builder.Z.Raw() {
-				t.Fatalf("borrowed projection lost receipts or exact anchor: %+v", borrowed.Orders)
+				t.Fatalf("borrowed projection lost receipts or exact anchor: %+v %+v", borrowed.PatrolWork, borrowed.Orders)
 			}
 			q.SetOwnedHandler(work.ID, func(*units.Unit, *orders.Node, uint32, uint32) (orders.Code, bool) { return 8, true })
-			destinationPhase := uint8(1)
-			if air {
-				destinationPhase = 2
-			}
-			q.SetOwnedHandler(back.ID, func(_ *units.Unit, n *orders.Node, _ uint32, _ uint32) (orders.Code, bool) {
-				n.Phase, n.DynamicGate = destinationPhase, 0xE0 // movement outcome mask [04 R-ORD-01 §0]
-				return 2, true
-			})
 			q.Pump(builder, 101)
 			failed := s.parityUnit(builder)
-			if q.Head() != back || !failed.PatrolWorkPaused || !failed.Orders[0].PatrolReturn || failed.Orders[0].WorkAssignmentOrdinal != 2 {
-				t.Fatalf("failed-work projection lost recovery: %+v", failed)
+			if q.Head() != patrol || q.PrimaryLen() != 2 || failed.PatrolWork == nil || failed.PatrolWork.Entries[0] != (orders.PatrolMemoryEntry{Kind: 1, Handle: target.Handle}) || failed.PatrolWork.Next != 1 {
+				t.Fatalf("failed-work projection lost the memory or kept the return: %+v", failed.PatrolWork)
 			}
-			back.Satisfied = 0x20 // arrived [04 R-ORD-01 §0]
-			q.Pump(builder, 102)
+			rules.AutomaticWorkResult(builder, next, 0x20, 6, 102) // arrived [04 R-ORD-01 §0]
 			arrived := s.parityUnit(builder)
-			if !arrived.Orders[0].PatrolReturnArrived || !arrived.PatrolWorkPaused {
-				t.Fatal("return arrival projection lost arrival or cleared route pause")
+			if arrived.PatrolWork == nil || arrived.PatrolWork.Entries != ([8]orders.PatrolMemoryEntry{}) || arrived.PatrolWork.Next != 0 {
+				t.Fatal("waypoint arrival projection kept the memory")
 			}
-			if borrowed.PatrolWorkPaused || borrowed.Orders[1].PatrolReturnArrived || failed.Orders[0].PatrolReturnArrived {
+			if borrowed.PatrolWork.Entries[0].Kind != 0 || failed.PatrolWork.Entries[0].Kind != 1 {
 				t.Fatal("later lifecycle state mutated an earlier trace value")
 			}
 		})

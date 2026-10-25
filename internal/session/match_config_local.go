@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/nanolathe-gg/nanolathe/internal/ai"
+	"github.com/nanolathe-gg/nanolathe/internal/community"
 	"github.com/nanolathe-gg/nanolathe/internal/content"
 	"github.com/nanolathe-gg/nanolathe/internal/gameplay"
 	"github.com/nanolathe-gg/nanolathe/internal/orders"
@@ -45,6 +46,10 @@ type MatchRoomInputs struct {
 	SpectatorView   MatchView
 	ReplayView      MatchView
 	Policies        MatchPolicies
+	// GeneratedMap is the recipe of the generated map the battle is played
+	// on, required extension 20 (docs/DESIGN_MAP_GENERATOR.md §10); empty
+	// for any other map.
+	GeneratedMap []byte
 }
 
 // NewMatchConfigRequest is the local request adapter: it resolves a skirmish
@@ -131,6 +136,9 @@ func newMatchConfigRequest(cfg SkirmishConfig, options SkirmishEntryOptions, roo
 		UnitRestrictions: append([]MatchUnitRestriction(nil), room.UnitRestrictions...),
 		RoomContent:      append([]MatchContentEntry(nil), room.RoomContent...),
 	}
+	if len(room.GeneratedMap) != 0 {
+		r.GeneratedMap = append([]byte(nil), room.GeneratedMap...)
+	}
 	// The rule words as composition reads them: Location zero randomizes and
 	// anything else is identity; commander death through its closed
 	// vocabulary; the three visibility words by their low bit
@@ -146,14 +154,27 @@ func newMatchConfigRequest(cfg SkirmishConfig, options SkirmishEntryOptions, roo
 		return MatchConfigRequest{}, matchFieldError("unitLimit", fmt.Sprintf("%d..%d", matchMinUnitLimit, matchMaxUnitLimit))
 	}
 	r.UnitLimit = uint16(cfg.UnitLimit)
+	// A single-player setup's allied sight, where the rule set offers the
+	// choice; an online room writes its own choice over this (onlineConfig).
+	if cfg.AlliedSight && !cfg.Survival.Enabled && seatRulesOf(set).AlliedSightChoice() {
+		r.AlliedSight = MatchAlliedSightShared
+	}
 	if cfg.Survival.Enabled {
 		r.SessionKind = MatchOnlineSurvival
 		r.SurvivalPace = cfg.Survival.Pace
 		r.SurvivalNoAir = cfg.Survival.NoAir
 		r.SurvivalNoNaval = cfg.Survival.NoNaval
 	}
-	if r.Seats, err = matchSeatsFromSetup(cfg, options, room, lobby); err != nil {
+	if r.Seats, err = matchSeatsFromSetup(cfg, options, room, lobby, features); err != nil {
 		return MatchConfigRequest{}, err
+	}
+	// A chosen start is carried only where the rule set honours it, so a
+	// Strict 3.1 battle's configuration stays version 1 whatever the
+	// lobby rows still hold.
+	if !seatRulesOf(set).ChosenStarts() {
+		for i := range r.Seats {
+			r.Seats[i].Start = StartPoint{}
+		}
 	}
 	if r.ContentProfile, err = matchContentProfileFromEntry(room, options.ContentLimits); err != nil {
 		return MatchConfigRequest{}, err
@@ -167,7 +188,7 @@ func newMatchConfigRequest(cfg SkirmishConfig, options SkirmishEntryOptions, roo
 // more humans and the room host's computers: the host is the first human,
 // relay seat 0, and each computer's difficulty is its own row's in lobby
 // (§6.6, §16.6).
-func matchSeatsFromSetup(cfg SkirmishConfig, options SkirmishEntryOptions, room MatchRoomInputs, lobby *[SkirmishMaxPlayers]uint8) ([]MatchSeat, error) {
+func matchSeatsFromSetup(cfg SkirmishConfig, options SkirmishEntryOptions, room MatchRoomInputs, lobby *[SkirmishMaxPlayers]uint8, features community.Features) ([]MatchSeat, error) {
 	n := cfg.NumPlayers
 	attacker := cfg.survivalAttacker()
 	local := -1
@@ -204,6 +225,9 @@ func matchSeatsFromSetup(cfg SkirmishConfig, options SkirmishEntryOptions, room 
 		if p.AllyGroup < 0 || p.AllyGroup > SkirmishDefaultAllyGroup {
 			return nil, matchFieldError(path+".allyGroup", "0..5")
 		}
+		if p.Start.Set && (p.Start.X < 0 || p.Start.Z < 0 || p.Start.X >= StartPointLimit || p.Start.Z >= StartPointLimit) {
+			return nil, matchFieldError(path+".start", fmt.Sprintf("coordinates 0..%d", StartPointLimit-1))
+		}
 		if p.Metal < 0 || p.Metal > math.MaxInt32 || p.Energy < 0 || p.Energy > math.MaxInt32 {
 			return nil, matchFieldError(path+".metal, energy", "finalized resources 0..2147483647")
 		}
@@ -221,6 +245,7 @@ func matchSeatsFromSetup(cfg SkirmishConfig, options SkirmishEntryOptions, room 
 			s.Metal, s.Energy = 0, 0
 		case p.IsHuman():
 			s.Role = MatchRoleHuman
+			s.Start = p.Start
 			s.Participant = room.Participants[i]
 			s.BuilderOptions = RuleSetForMode(cfg.Gameplay).Orders.DefaultBuilderOptions()
 			if options.BuilderOptions != nil {
@@ -231,6 +256,7 @@ func matchSeatsFromSetup(cfg SkirmishConfig, options SkirmishEntryOptions, room 
 			s.Participant = room.Participants[i]
 		default:
 			s.Role = MatchRoleComputer
+			s.Start = p.Start
 			s.HostSeat = uint8(local)
 			s.ComputerKind = p.AI
 			s.Difficulty = difficulty
@@ -239,7 +265,7 @@ func matchSeatsFromSetup(cfg SkirmishConfig, options SkirmishEntryOptions, room 
 					return nil, matchFieldError(path+".difficulty", "0 easy, 1 medium or 2 hard")
 				}
 			}
-			text, err := options.AIOverrides.For(uint8(i), matchAIDifficulty(s.Difficulty))
+			text, err := options.AIOverrides.For(uint8(i), matchAIDifficulty(uint8(DifficultyTier(features, int(s.Difficulty)))))
 			if err != nil {
 				return nil, matchFieldError(path+".aiParams", "canonical key=value parameters: "+err.Error())
 			}
@@ -257,8 +283,8 @@ func matchSeatsFromSetup(cfg SkirmishConfig, options SkirmishEntryOptions, room 
 	return seats, nil
 }
 
-// matchAIDifficulty is the AI vocabulary's word for a difficulty value, the
-// layer AIOverrides.For merges.
+// matchAIDifficulty is the AI vocabulary's word for a difficulty tier
+// (DifficultyTier), the layer AIOverrides.For merges.
 func matchAIDifficulty(d uint8) ai.Difficulty {
 	switch d {
 	case 0:

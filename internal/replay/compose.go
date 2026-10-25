@@ -49,7 +49,7 @@ func compatibilityError(path, expected string, cause error) error {
 // does for any battle before its first pump; the battle then plays with
 // NewPlayer.
 func Compose(h Header, c Content) (*session.Session, error) {
-	config, err := session.DecodeMatchConfig(h.Config)
+	config, err := h.Configuration()
 	if err != nil {
 		return nil, compatibilityError("header.config", "a configuration this build decodes", err)
 	}

@@ -259,10 +259,11 @@ func TestOnlineStrictComputerStopsWithItsHostRetail(t *testing.T) {
 	}
 }
 
-// onlineCommunitySpan bounds the Community run at ten minutes. Seat 0 is
-// defeated about eight minutes in, by the hard Modern computer on seat 1's
-// team; seat 1 then wins with it, so the battle ends five seconds later.
-const onlineCommunitySpan = 18000
+// onlineCommunitySpan bounds the Community run at 13 minutes 20 seconds.
+// Seat 0 is defeated about twelve minutes in, by the hard Modern computer on
+// seat 1's team; seat 1 then wins with it, so the battle ends five seconds
+// later.
+const onlineCommunitySpan = 24000
 
 // A Community 3.9 room with TestOnlineModernComputersAgreeAcrossClientsRetail's
 // computers — a Modern computer on each human's team, medium and hard, and a

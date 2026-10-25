@@ -60,6 +60,7 @@ var tacticsKeys = [...]tacticsKey{
 	{name: "hn", knob: true, min: 1}, {name: "hv", knob: true, min: 0},
 	{name: "probe"}, {name: "tour"},
 	{name: "sm", knob: true, min: 1}, {name: "raidv", knob: true, min: 1},
+	{name: "warn"}, {name: "walls"},
 }
 
 // minKnob is the least signed 32-bit value: the margin and aggression knobs

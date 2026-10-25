@@ -66,4 +66,13 @@ func (e *Economy) Report(add func(name string, value int64)) {
 	add("cloak_on", int64(c.sentOn))
 	add("cloak_off", int64(c.sentOff))
 	add("cloak_peak", int64(c.peak))
+	add("breach_sent", e.br.sent)
+	add("breach_recalled", e.br.recalled)
+	add("wall_segments", e.wl.segments)
+	add("wall_pieces", e.wl.pieces)
+	for i, n := range e.wl.why {
+		if n != 0 {
+			add("wall_why_"+wallWhyNames[i], n)
+		}
+	}
 }

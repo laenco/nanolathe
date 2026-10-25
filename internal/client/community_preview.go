@@ -202,8 +202,8 @@ func parseCommunityPreviewPieces(value string) map[string]struct{} {
 }
 
 // filterCommunityPreviewModel removes faces from excluded pieces without
-// hiding their descendants. The regular Hidden piece state cascades through a
-// hierarchy, so it cannot express CP-UD-2's independent child traversal.
+// hiding their descendants. It filters immutable geometry so ordinary preview
+// states and the substitute's hierarchy remain available to the composer.
 func filterCommunityPreviewModel(src *unitModel, whitelistValue string) *unitModel {
 	if src == nil || src.compiled == nil {
 		return src

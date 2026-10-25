@@ -1024,13 +1024,12 @@ weapon record table; `tnt_bytes`, the largest whole map terrain file a loader
 will read; and `los_bytes`, the largest battle-table file the LOS and meteor
 compilers will read. `content.Limits` carries exactly those four;
 `content.RetailLimits()` is the retail baseline — a 512-bit domain, so IDs
-1..511 are usable, a 256-record weapon table, a 16 MiB map read and a 1 MiB
+1..511 are usable, a 256-record weapon table, a 128 MiB map read and an 8 MiB
 battle-table read — and `content.LimitsFromProfile` converts a profile, keeping
 the retail value for any count the profile leaves unset.
 `content.CompileWithOptions(fs, content.Options{Limits: ...})` is the entry
 point that takes them; `Compile` and any options that leave the counts unset
-keep the retail baseline, so every caller that has not resolved a profile
-admits exactly the content it always did. The two single-family battle-table
+keep the baseline limits above. The two single-family battle-table
 entry points take the limits directly — `content.CompileLOSTables(fs, limits)`
 and `content.CompileMeteor(fs, limits)`, with `content.RetailLimits()` as the
 baseline — while the map census is reached only through the catalog compile.
@@ -1055,7 +1054,11 @@ fallback census, battle terrain, battle minimap and menu preview. A ranged
 catalog census is unaffected, because it reads two short header ranges and
 never the whole terrain. Consequently a listed map can still exceed the cap
 when opened; range support must not bypass the full-load cap. The resolved
-base game's profile uses 16 MiB and the four hosted mods' configs use 64 MiB.
+base game's profile uses 128 MiB and the hosted mods' configs use 64 MiB.
+The base caps are sized for the installs players run rather than a stock 3.1
+one: TA Unofficial Patch 3.9.02's `gamedata/los.tdf` is 2,377,872 bytes, and
+community map packs carry terrain files up to about 65 MiB, where a TNT with
+the full 65536-tile table ends.
 Applying this existing profile policy to runtime readers replaces their former
 independent 32 MiB terrain/radar and 1 GiB menu limits. Detached callers with
 no catalog limit retain the bounded 32 MiB terrain/radar fallback; a menu

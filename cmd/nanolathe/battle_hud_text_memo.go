@@ -45,9 +45,9 @@ func (m *hudTextMemo) clock(label string, tick uint32) string {
 
 // hudTextMemos are the per-site memos of one HUD.
 type hudTextMemos struct {
-	anchors             [len(hud.AnchorNames)]hudTextMemo
-	clock, weatherClock hudTextMemo
-	wind, tide          hudTextMemo
+	anchors    [len(hud.AnchorNames)]hudTextMemo
+	clock      hudTextMemo
+	wind, tide hudTextMemo
 }
 
 // anchorNumber is format(v) memoised for the readout at an anchor index.

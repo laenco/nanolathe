@@ -140,7 +140,8 @@ func TestSimulationDigestClassifiesEveryDefinitionField(t *testing.T) {
 			"StandingMoveOrder", "StandingFireOrder", "InitCloaked", "Downloadable", "Builder", "Stealth", "BMCode", "ZBuffer", "IsAirBase", "IsTargetingUpgrade", "Teleporter", "HideDamage", "ShootMe", "ArmoredState", "ActivateWhenBuilt", "CanFly", "CanHover", "Upright", "Floater", "Amphibious", "IsFeature", "NoShadow", "ImmuneToParalyzer", "HoverAttack", "AntiWeapons", "Digger", "OnOffable", "MobileStandOrders", "FireStandOrders", "CanStop", "CanAttack", "CanGuard", "CanPatrol", "CanMove", "CanLoad", "CanReclamate", "CanResurrect", "CanCapture", "CanDGun", "Kamikaze", "NoRestrict", "ShowPlayerName", "Commander", "CantBeTransported", "Wacky",
 			"SelfDestructCountdown", "SelfDestructCountdownPresent", "Unknown"},
 		"explicit": {"ModelTop", "ModelTopFixed", "BuildPageCount", "HasPageZeroGUI", "UnitLimit", "LimitEnabled", "Limit", "Weapon1Def", "Weapon2Def", "Weapon3Def", "ExplodeAsDef", "SelfDestructAsDef", "TransportedExplodeAsDef", "TransportedSelfDestructAsDef",
-			"Rotations", "VeterancyThresholds", "VeterancyAccuracyBuffRate", "TransportedExplodeAs", "TransportedSelfDestructAs", "PreviewPieces", "PreviewPiecesS", "PreviewPiecesE", "PreviewPiecesN", "PreviewPiecesW", "PreviewFaceOpponent", "PreviewObject3D"},
+			"Rotations", "VeterancyThresholds", "VeterancyAccuracyBuffRate", "TransportedExplodeAs", "TransportedSelfDestructAs", "PreviewPieces", "PreviewPiecesS", "PreviewPiecesE", "PreviewPiecesN", "PreviewPiecesW", "PreviewFaceOpponent", "PreviewObject3D",
+			"BuilderSpeed"},
 		"cob":        {"Script"},
 		"diagnostic": {"DiscoveryProvenance", "ScriptProvenance"},
 		// Derived only from the canonical Category string, which already
@@ -197,7 +198,11 @@ func TestSimulationDigestClassifiesEveryDefinitionField(t *testing.T) {
 		case reflect.Pointer:
 			value.Set(reflect.ValueOf(&WeaponDef{DefinitionHeader: DefinitionHeader{CanonicalKey: "w"}, ID: 4}))
 		case reflect.Struct:
-			value.Set(reflect.ValueOf(MaskForID(5)))
+			if value.Type() == reflect.TypeOf(Factor{}) {
+				value.Set(reflect.ValueOf(Factor{Num: 5, Den: 1}))
+			} else {
+				value.Set(reflect.ValueOf(MaskForID(5)))
+			}
 		default:
 			t.Fatalf("no perturbation for %s (%s)", field.Name, value.Kind())
 		}

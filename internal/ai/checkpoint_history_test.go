@@ -44,7 +44,7 @@ func TestApplicationHistoryEnvelopeVectors(t *testing.T) {
 			t.Fatalf("state %+v, %v", s, err)
 		}
 	}
-	assertDigest("d0195e27a8b5b979e0db6b20d37d9352b2e38e3ad865e8b5f65c026b972764c9", 0)
+	assertDigest("e29646c240ab62744ad0bdfc3d80b6ac6f811ee66308784758e82fa97c4abce7", 0)
 	serial := h.NextSerial()
 	if serial != 1 {
 		t.Fatal(serial)
@@ -53,17 +53,17 @@ func TestApplicationHistoryEnvelopeVectors(t *testing.T) {
 	a.Operation(1, historyActor)
 	a.Operation(6, func(e *checkpoint.Encoder) error { _ = historyActor(e); e.Bool(true); return e.Err() })
 	a.Finish(2, 2)
-	assertDigest("2c6c71ad1ced6ec9fb83665b77673bef496292083e2c102cd8e5cfd9a24801a4", 1)
+	assertDigest("4731082c419459325951f5cd3c7c5068263829d15ab07ead74755b6491db235e", 1)
 	if a.header.Len() != 0 || a.operations.Len() != 0 || a.header.Cap() != 0 || a.operations.Cap() != 0 {
 		t.Fatal("attempt retained its buffers")
 	}
 	h.BeginAttempt(77, serial, 1, historyIntent(0xabcd)).Finish(3, 3)
-	assertDigest("dd755a89877a45e05b8f5de8e39eef9c6ebe73317a490ce08882fb0a8d011e59", 2)
+	assertDigest("39d8edad276ddf311bd661411b9a38eedb30dd63032ad0757e92aad4ffc90d93", 2)
 	var out bytes.Buffer
 	if err := h.WriteCheckpoint(checkpoint.NewEncoder(&out)); err != nil {
 		t.Fatal(err)
 	}
-	want := aiCheckpointHex(t, "010200000000000000dd755a89877a45e05b8f5de8e39eef9c6ebe73317a490ce08882fb0a8d011e5902020000000000000003")
+	want := aiCheckpointHex(t, "01020000000000000039d8edad276ddf311bd661411b9a38eedb30dd63032ad0757e92aad4ffc90d9302020000000000000003")
 	if !bytes.Equal(out.Bytes(), want) {
 		t.Fatalf("history bytes %x", out.Bytes())
 	}
@@ -72,7 +72,7 @@ func TestApplicationHistoryEnvelopeVectors(t *testing.T) {
 	if err := h.AppendCheckpointSummary(&s); err != nil {
 		t.Fatal(err)
 	}
-	if n, sum := s.Result(); n != 6 || sum != 10052144145351140994 {
+	if n, sum := s.Result(); n != 6 || sum != 1000993135341487227 {
 		t.Fatalf("summary %d %d", n, sum)
 	}
 	if n := testing.AllocsPerRun(20, func() {

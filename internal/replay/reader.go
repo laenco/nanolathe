@@ -82,7 +82,7 @@ func readPreamble(data []byte) (Header, int, error) {
 	if err := r.Err(); err != nil {
 		return Header{}, 0, err
 	}
-	if version != FormatVersion {
+	if version != 1 && version != FormatVersion {
 		return Header{}, 0, fmt.Errorf("%w: logical path replay format version %d, providers searched [replay format v%d], expected replay format version %d", ErrUnsupportedVersion, version, FormatVersion, FormatVersion)
 	}
 	size := r.U32()
@@ -93,7 +93,13 @@ func readPreamble(data []byte) (Header, int, error) {
 	if err := r.Err(); err != nil {
 		return Header{}, 0, err
 	}
-	h, err := decodeHeader(raw)
+	var h Header
+	var err error
+	if version == 1 {
+		h, err = decodeHeaderVersion(raw, version)
+	} else {
+		h, err = decodeHeader(raw)
+	}
 	if err != nil {
 		return Header{}, 0, err
 	}

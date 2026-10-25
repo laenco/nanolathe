@@ -225,6 +225,7 @@ func TestRetailLZGoldenFixtures(t *testing.T) {
 		{"mixed", mixed, "c89406551d69aabb1ee98d502033cd5f4c3f412237f77dac25edb8c27e953173"},
 		{"window-boundary", boundary, "6792156c53eb7c375a79cfacda4a326b6ec862e12c8164656bb674b14f143adc"},
 		{"partial-tag", []byte("partial tag"), "82c6f5ea31500063fea13700619ab681a7884e0245bd6720f40caf8630a91b22"},
+		{"records", retailRecordsFixture(), "14c8b26f7b4881b6020b9c857d3bf76316256e648c71f27cd4d96d61578da656"},
 	}
 	for _, fixture := range fixtures {
 		t.Run(fixture.name, func(t *testing.T) {
@@ -244,8 +245,38 @@ func TestRetailLZGoldenFixtures(t *testing.T) {
 	}
 }
 
+// retailRecordsFixture resembles a bank's unit rows: fixed-size records whose
+// slot, definition and coordinate fields change a little from row to row, so
+// most two-byte keys have many candidate positions.
+func retailRecordsFixture() []byte {
+	records := make([]byte, 0, 640*48)
+	seed := uint32(7)
+	for i := 0; i < 640; i++ {
+		var rec [48]byte
+		seed = seed*1664525 + 1013904223
+		binary.LittleEndian.PutUint32(rec[0:], uint32(i))
+		binary.LittleEndian.PutUint16(rec[4:], uint16(seed>>24)%40)
+		binary.LittleEndian.PutUint32(rec[8:], uint32(1000+i%64)<<16|seed&0xffff)
+		binary.LittleEndian.PutUint32(rec[12:], uint32(2000+i/64)<<16|seed>>16)
+		binary.LittleEndian.PutUint16(rec[20:], uint16(seed%3000))
+		copy(rec[32:], "ARMPW\x00\x00\x00CORAK\x00")
+		records = append(records, rec[:]...)
+	}
+	return records
+}
+
 func BenchmarkEncodeRetailLZRepetitive(b *testing.B) {
 	plain := bytes.Repeat([]byte("AB"), 32768/2)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(plain)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = encodeRetailLZ(plain)
+	}
+}
+
+func BenchmarkEncodeRetailLZRecords(b *testing.B) {
+	plain := retailRecordsFixture()
 	b.ReportAllocs()
 	b.SetBytes(int64(len(plain)))
 	b.ResetTimer()

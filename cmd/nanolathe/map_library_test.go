@@ -16,6 +16,7 @@ import (
 	"github.com/nanolathe-gg/nanolathe/internal/maplibrary"
 	"github.com/nanolathe-gg/nanolathe/internal/modfetch"
 	"github.com/nanolathe-gg/nanolathe/internal/modlibrary"
+	"github.com/nanolathe-gg/nanolathe/internal/session"
 	"github.com/nanolathe-gg/nanolathe/internal/ui"
 	"github.com/nanolathe-gg/nanolathe/vfs"
 )
@@ -319,6 +320,9 @@ func TestMapRemovalProtectsWinningRetailModAndManualRoots(t *testing.T) {
 		t.Fatal("battle allowed removal")
 	}
 	g.battle = nil
+	// A start point placed on the selected map survives a failed removal and
+	// goes with the map when the removal succeeds.
+	g.setup.Players[1].Start = session.StartPoint{Set: true, X: 64, Z: 64}
 	before := g.setup
 	// A failed atomic removal must restore the mounted map and its selection.
 	if err := os.Remove(lib.StagingDir()); err != nil {
@@ -348,7 +352,11 @@ func TestMapRemovalProtectsWinningRetailModAndManualRoots(t *testing.T) {
 	if g.setup.MapName == "Downloaded" || g.opts.excludedMapRoot != "" {
 		t.Fatal("removed selection or temporary mount exclusion persisted")
 	}
+	if g.setup.Players[1].Start.Set {
+		t.Fatal("the removed map's start point stayed with its replacement")
+	}
 	before.MapName = g.setup.MapName
+	before.Players[1].Start = session.StartPoint{}
 	if !reflect.DeepEqual(g.setup, before) {
 		t.Fatal("removal changed other setup fields")
 	}

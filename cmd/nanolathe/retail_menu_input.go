@@ -36,6 +36,11 @@ func (g *gameShell) menuInput(cl *client.Client) {
 	if g.openUnitViewerPreview(in) {
 		return
 	}
+	// The Place Starts window takes every event while it is open.
+	if g.startPlacer != nil && g.frontend.Mode == modeMenuSkirmish {
+		g.serviceStartPlacer(in)
+		return
+	}
 	g.serviceMenuWidgets(p, in)
 }
 
@@ -149,6 +154,10 @@ func (g *gameShell) serviceMenuWidgets(p *ui.Panel, in *input.State) bool {
 		}
 	}
 	if result.FiredButton == 2 && g.frontend.Mode == modeMenuSkirmish && !g.onlineLobbyActive() {
+		if gui.CallbackName(gad.Name) == skirmishPlayersButton && !g.survivalMenu {
+			g.stepSkirmishPlayerCount(-1)
+			return true
+		}
 		if slot, kind, ok := dynamicSlot(gad.Name); ok {
 			if kind == "Metal" {
 				g.setup.Players[slot].Metal = decreaseResource(g.setup.Players[slot].Metal)
@@ -425,11 +434,13 @@ func (g *gameShell) activateGadget(name string) {
 			if err := g.openMapsFetch(); err != nil {
 				reportRetailMessageError(g.showRetailMessage(err.Error()))
 			}
+		case "GENMAP":
+			g.openMapGenerator()
 		case "PREVMENU":
 			g.leaveMapPicker()
 		case "LOAD", "MAPNAMES":
 			if len(g.maps) != 0 && g.mapIdx >= 0 && g.mapIdx < len(g.maps) {
-				g.setup.MapName = g.maps[g.mapIdx]
+				g.setSetupMap(g.maps[g.mapIdx])
 				g.saveSettings()
 				g.leaveMapPicker()
 			}
@@ -470,6 +481,18 @@ func (g *gameShell) activateSkirmishGadget(name string) {
 		return
 	}
 	switch name {
+	case skirmishPlayersButton:
+		g.stepSkirmishPlayerCount(1)
+		return
+	case placeStartsButton:
+		if g.setupSeatRules().ChosenStarts() {
+			g.openStartPlacer()
+		}
+		return
+	case alliedSightButton:
+		if g.setupSeatRules().AlliedSightChoice() {
+			g.setup.AlliedSight = !g.setup.AlliedSight
+		}
 	case "StartLocation":
 		g.setup.Location ^= 1
 	case "CommanderDeath":
@@ -749,8 +772,11 @@ func (g *gameShell) retailSkirmishStartError() string {
 		return "There must be at least one player and one computer opponent"
 	}
 	playersForStart := computers + 1
+	// Modern and Community seat players the map has no start for at
+	// generated starts (SeatRules.ExtraStarts); Strict 3.1 refuses them as
+	// retail does.
 	schema, err := mission.SelectNetworkSchema(d.ota, playersForStart)
-	if err != nil || schema.StartPositions < playersForStart {
+	if err != nil || (schema.StartPositions < playersForStart && !g.setupSeatRules().ExtraStarts()) {
 		return "There are too many players enabled for this map"
 	}
 	if g.retailAllPlayersSameAlliedGroup(n) {

@@ -15,6 +15,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/nanolathe-gg/nanolathe/formats"
 	"github.com/nanolathe-gg/nanolathe/internal/addonlibrary"
+	"github.com/nanolathe-gg/nanolathe/internal/i18n"
 	"github.com/nanolathe-gg/nanolathe/internal/modfetch"
 	"github.com/nanolathe-gg/nanolathe/internal/platform/screenkit"
 	"github.com/nanolathe-gg/nanolathe/internal/settings"
@@ -34,7 +35,8 @@ import (
 type nlAddonRow struct {
 	known knownAddon
 	// inFolder marks an add-on whose archives sit byte-identical in the base
-	// install's folder: the install supplies it, so it has no switch.
+	// install's folder: the install supplies it, so it has no switch. A
+	// model pack still needs an installed selection to apply its model tier.
 	inFolder bool
 	// units are the units its archives define, read from the archives
 	// themselves when they are at hand (installed or in the folder), so they
@@ -46,6 +48,9 @@ type nlAddonRow struct {
 	// declaration (docs/DESIGN_MODS_MUTATORS.md §5.8): its sides and how
 	// many units they have, shown in place of the unit names.
 	faction string
+	// models marks an audited model-only payload, which replaces models
+	// rather than adding units (§5.7).
+	models bool
 }
 
 // nlAddonUnit is one unit an add-on's archives define: its unit name, its
@@ -168,6 +173,12 @@ func nlAddonRowsOf(known []knownAddon, root string) []nlAddonRow {
 			row.names = strings.Join(names, ", ")
 			if factions, err := addonlibrary.Factions(addonlibrary.Addon{Paths: paths}); err == nil {
 				row.faction = nlFactionText(factions)
+			}
+			row.models, _ = addonlibrary.ModelsOnly(addonlibrary.Addon{Paths: paths})
+			if row.models && !addonlibrary.ReplacesBase(addonlibrary.Addon{Archives: k.archives}) {
+				// A folder copy alone has the UFO tier, below the patch;
+				// keep the installed switch or catalogue Get available (§5.7).
+				row.inFolder = false
 			}
 		}
 		rows = append(rows, row)
@@ -316,7 +327,7 @@ func (s *nlScreen) addonsCard() nlCard {
 			})
 		},
 		desc: func(*nlDraft, int) string {
-			return "Cavedog's bonus units and extra factions beside Arm and Core, in any combination. Factions play with the original game only."
+			return "Bonus units, community fixes, model replacements and extra factions, enabled beside the selected mod."
 		},
 		scene: func(*nlDraft, int) string { return "armor" },
 	}
@@ -460,6 +471,9 @@ func (s *nlScreen) addonSubText(row nlAddonRow) string {
 	if row.faction != "" {
 		return row.faction
 	}
+	if row.models {
+		return "Model replacements"
+	}
 	if row.names != "" {
 		return row.names
 	}
@@ -492,7 +506,9 @@ func (s *nlScreen) addonVersionText(row nlAddonRow) string {
 // its download's progress, or "Already in your install". Beneath an add-on
 // whose archives are at hand its units' build pictures show, read from those
 // archives, so they show before the add-on is mounted.
-func (s *nlScreen) heroAddons(screen *ebiten.Image, x, y, a float64) float64 {
+// The list ends at bottom: more rows than fit there scroll, as the content
+// list does, so the cards beneath never cover a row.
+func (s *nlScreen) heroAddons(screen *ebiten.Image, x, y, bottom, a float64) float64 {
 	u := s.u()
 	s.wantAddons()
 	l := &s.addonList
@@ -517,17 +533,30 @@ func (s *nlScreen) heroAddons(screen *ebiten.Image, x, y, a float64) float64 {
 		stripH = 50 * u
 	}
 	strip := func(row nlAddonRow) bool { return stripH > 0 && len(row.units) > 0 }
+	shown := len(rows)
+	if stripH == 0 {
+		notes := 0.0
+		if loading {
+			notes += 24 * u
+		}
+		if l.failure != "" {
+			notes += 24 * u
+		}
+		shown = max(1, min(shown, int((bottom-notes-box.Y-12*u)/rowH)))
+	}
 	box.H = 12 * u
-	for _, row := range rows {
+	for _, row := range rows[:shown] {
 		box.H += rowH
 		if strip(row) {
 			box.H += stripH
 		}
 	}
+	s.addonScroll.layout(len(rows), shown, box)
 	s.well(screen, box, a)
 	job := addonDownload.view()
 	ry := box.Y + 6*u
-	for i, row := range rows {
+	for i := s.addonScroll.top; i < s.addonScroll.top+shown; i++ {
+		row := rows[i]
 		k := row.known
 		h := rowH
 		if strip(row) {
@@ -587,8 +616,10 @@ func (s *nlScreen) heroAddons(screen *ebiten.Image, x, y, a float64) float64 {
 		}
 		// The second line stops short of the control; a long one shrinks a
 		// little before it is cut.
-		sub := s.addonSubText(row)
-		st := screenkit.Style{Size: 11 * u, Top: alphaC(color.RGBA{169, 162, 131, 255}, a)}
+		// It is translated first and cut as shown, so the cut never leaves an
+		// English fragment.
+		sub := i18n.T(s.addonSubText(row))
+		st := screenkit.Style{Size: 11 * u, Top: alphaC(color.RGBA{169, 162, 131, 255}, a), Verbatim: true}
 		room := right - controlW - 16*u - (r.X + 36*u)
 		for st.Size > 9.5*u && bf.Measure(sub, st) > room {
 			st.Size -= 0.5 * u
@@ -619,6 +650,7 @@ func (s *nlScreen) heroAddons(screen *ebiten.Image, x, y, a float64) float64 {
 			}
 		}
 	}
+	s.drawScrollbar(screen, "addon", &s.addonScroll, box)
 	y = box.Y + box.H
 	if loading {
 		bf.Draw(screen, "Checking the add-on catalogue…", x+4*u, y+18*u, screenkit.Style{Size: 11 * u, Top: alphaC(nlDim, a), Shadow: 0.1})

@@ -246,7 +246,7 @@ func (b *battleSession) serviceCommandDrag(in *input.State, cl *client.Client, m
 			if len(targets) == 0 {
 				return true
 			}
-			_ = b.DispatchOrderCommand(session.HumanOrderCommand{Handles: b.selectedHandlesInSlotOrder(), Code: hud.LatchToCode(d.latch), Targets: targets, Queued: modifiers.Shift})
+			b.dispatchAreaWork(f, hud.LatchToCode(d.latch), targets, modifiers.Shift)
 		default:
 			actors := b.dragMoveActors(f)
 			points := make([]dragPoint, len(actors))
@@ -464,6 +464,76 @@ func (b *battleSession) dragAreaTargets(f *committedframe.Frame, d *battleComman
 		}
 	}
 	return out
+}
+
+// dispatchAreaWork orders an area's work list nearest-first for the selected
+// workers (DESIGN_INTERFACE_HUD_INPUT §3.11). Workers are the `canreclamate`
+// definitions repair and reclaim resolve for [04 R-ORD-02 §1]. Each worker,
+// or each group of nearby workers when the budget below is short, gets one
+// command whose copy of the list is a nearest-next walk from where it stands,
+// so it works through the area instead of crossing it in publication order.
+// Every actor already works through an area list on its own, so splitting the
+// command changes only the visiting order. The other selected actors, which
+// queue nothing, and any actor the frame cannot place or name ride in the
+// first command; with no worker they share one command in publication order.
+func (b *battleSession) dispatchAreaWork(f *committedframe.Frame, code int, targets []session.HumanOrderTarget, queued bool) {
+	selected := b.selectedHandlesInSlotOrder()
+	var workers []int // indices into selected
+	var positions []dragPoint
+	for i, h := range selected {
+		v, found := snapshotUnitByHandle(f, h)
+		var def *content.UnitDef
+		if found && b.cat != nil {
+			def, found = b.cat.Unit(v.DefName)
+		}
+		if found && def != nil && def.CanReclamate {
+			workers = append(workers, i)
+			positions = append(positions, dragPoint{int32(v.X.Floor()), int32(v.Z.Floor())})
+		}
+	}
+	if len(workers) == 0 {
+		if len(selected) != 0 {
+			_ = b.DispatchOrderCommand(session.HumanOrderCommand{Handles: selected, Code: code, Targets: targets, Queued: queued})
+		}
+		return
+	}
+	points := make([]dragPoint, len(targets))
+	for i := range targets {
+		points[i] = dragPoint{int32(targets[i].Position.X.Floor()), int32(targets[i].Position.Z.Floor())}
+	}
+	// Every selected actor belongs to exactly one command, in selection order;
+	// non-workers join the first group's.
+	group := make([]int, len(selected))
+	groups, starts := dragAreaGroups(positions, len(targets), b.areaCommandLimit())
+	for g, members := range groups {
+		for _, w := range members {
+			group[workers[w]] = g
+		}
+	}
+	for g := range groups {
+		walk := dragNearestChain(starts[g], points)
+		ordered := make([]session.HumanOrderTarget, len(walk))
+		for i, j := range walk {
+			ordered[i] = targets[j]
+		}
+		var handles []pool.Handle
+		for i, h := range selected {
+			if group[i] == g {
+				handles = append(handles, h)
+			}
+		}
+		_ = b.DispatchOrderCommand(session.HumanOrderCommand{Handles: handles, Code: code, Targets: ordered, Queued: queued})
+	}
+}
+
+// areaCommandLimit is how many commands one area gesture may send: the
+// single-player fan-out budget, or one online, where the relay's pending
+// budget is shared by every seat (DESIGN_INTERFACE_HUD_INPUT §3.11).
+func (b *battleSession) areaCommandLimit() int {
+	if b.onlineBattle() {
+		return 1
+	}
+	return dragAreaCommandLimit
 }
 
 func dragGroundPosition(cl *client.Client, p dragPoint) orders.ResolvePos {

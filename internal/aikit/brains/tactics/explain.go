@@ -19,6 +19,15 @@ func (a *Army) Explain(b *core.Board, x *aikit.Explain) {
 			a.avail, a.spent, a.prodReserve, a.issued, a.starved, a.droppedTotal),
 		fmt.Sprintf("tactics: gather (%d,%d), enemy army %d value (seen at %d,%d), %d target zones, %d incidents, guard need %d",
 			a.gx, a.gz, a.enemyMob.value, a.enemyMobX, a.enemyMobZ, len(a.candidates), len(a.incidents), a.threatMemory))
+	if a.approachOn {
+		in := &a.approach
+		by := "nobody (home holds it)"
+		if in.taken > 0 {
+			by = roleNames[in.taken]
+		}
+		x.Notes = append(x.Notes, fmt.Sprintf("tactics: enemy force closing on home: %d units, value %d, at (%d,%d); answered by %s",
+			in.enemy.n, in.enemy.value, in.x, in.z, by))
+	}
 	for id := int32(1); id < numSq; id++ {
 		s := &a.sq[id]
 		if !s.active || len(s.members) == 0 {
@@ -60,6 +69,9 @@ func (a *Army) Explain(b *core.Board, x *aikit.Explain) {
 	x.Notes = append(x.Notes, fmt.Sprintf("tactics: launched %d, engaged %d (%d skirmishes), retreated %d in fight / %d before, cleared %d, defended %d, withdrew %d units, %d focus orders",
 		st.launched, st.engaged, st.skirmish, st.retreatFight, st.retreatEarly, st.cleared, st.defended, st.withdrawn, st.focus))
 	x.Notes = append(x.Notes, fmt.Sprintf("tactics: %d members stuck (standing still far from their orders); drops after army spend %d, while starved %d", a.stuckN, a.droppedAfterSpend, a.droppedStarved))
+	if a.P.Walls {
+		x.Notes = append(x.Notes, fmt.Sprintf("tactics: walls held squads %d times, %d pieces fell, %d fire orders at pieces", st.walled, st.breached, st.breachOrders))
+	}
 	if a.P.Air || a.P.Naval {
 		x.Notes = append(x.Notes, fmt.Sprintf("tactics: reach tables %v (%d classes), %d members called back from goals out of reach", a.reachReady, len(a.rcls), a.stranded))
 		x.Notes = append(x.Notes, fmt.Sprintf("tactics: air %d strikes (%d targets destroyed, %d aborted), %d intercepts, enemy air-to-air %d dps; land cut %v, %d naval target zones, enemy fleet %d value",
@@ -148,6 +160,10 @@ func (a *Army) Report(add func(name string, v int64)) {
 	add("tac_passage_moved", st.passage)
 	add("tac_wait_thinks", st.waits)
 	add("tac_wait_passage", st.waitPassage)
+	add("tac_warned", st.warned)
+	add("tac_walled", st.walled)
+	add("tac_breached", st.breached)
+	add("tac_breach_orders", st.breachOrders)
 	// Main-squad offensives (a launch the posture allowed; with posture=0
 	// every launch from a regroup) and soft raids while held.
 	off := &a.off

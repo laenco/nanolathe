@@ -854,6 +854,15 @@ interface bit, Space held, and no focused text editor; `ScoreSlide.Step` is its
 slide with its cues; `ScoreRowOrder` compacts the qualifying slots; `ScoreFlash`
 is the kill/loss flash, armed only while the interface bit is set
 `[07 R-HUD-04 §1]`.
+Names come from the committed player record: default computer names use
+compiled side metadata, while explicit player names remain intact.
+As Nanolathe host presentation, the panel appends the compiled faction name
+when it differs from the player's name, for example `Player (TLL)`. It resolves
+the faction from the committed side ordinal, including after loading, in every
+gameplay mode. A computer already named `TLL` keeps that concise label. This
+changes only the drawn label, with no player-record or save-format change.
+After loading, distinct registration ranks and reconstructed default names
+come from the session restore boundary (DESIGN_SESSIONS_AI_SAVE §2).
 
 **The queued-order overlay** (`queueoverlay.go`, `buildmarker.go`).
 `QueueOverlay` is a pure snapshot consumer: it walks the committed order queues
@@ -1037,6 +1046,87 @@ becomes a player, matching the row-to-player conversion `[08 R-SKIR-01 §2]`.
 The controller cycle and the row build's all-Open fallback (row 0 Player,
 row 1 Computer, applied when the rows are built, not at settings load) also
 read only the shown rows `[08 R-SKIR-01 §1]`.
+
+**Player count (Nanolathe presentation policy, user-authorized
+2026-10-18).** A visible Players control sets the same row count the typed
+selector does: a `Players` heading cloned from the Location label at
+(45, 290) and a copy of row 0's Metal button at (45, 306), the slot under the
+player box that the Survival screen gives its first wave control, showing the
+count. A left click adds a row and a right click removes one, wrapping
+within 2..8 (the user's chosen ceiling; the typed `*IX` and `*X` still reach
+nine and ten, and a click from there steps to the nearer end of the range).
+Each change saves the count and rebuilds the window, exactly as the typed
+selector does, and rows keep their choices while hidden. When the count
+first shows a row that no settings file described, that row's zero metal and
+energy are shown as the default 1000 that battle entry would read them as;
+both paths do this. The shown-rows rule is retail's, and the engine already
+seats ten. Under Modern and Community rules the start preflight no longer
+refuses more players than the map has start positions; the extra players
+begin at generated starts
+([DESIGN_SESSIONS_AI_SAVE "Modern extra start positions"](DESIGN_SESSIONS_AI_SAVE.md#modern-extra-start-positions)).
+Strict 3.1 keeps retail's `There are too many players enabled for this map`. The
+Survival screen and the online lobby (which seats up to ten by the map,
+DESIGN_MULTIPLAYER §6.6) have no Players control. Tests:
+`TestSkirmishPlayerCountSteps` and `TestSkirmishScreenSetsEightPlayersRetail`,
+which composes a one-human, seven-computer battle under Strict 3.1 and
+Modern and, with `NANOLATHE_SHOT_DIR` set, writes the eight-row screen.
+
+**Allied sight (Nanolathe Modern policy, user-authorized 2026-10-18).** Under
+Modern and Community 3.9 rules (`SeatRules.AlliedSightChoice`; Strict 3.1
+shows neither control, below), an
+`Allied Sight` heading cloned from the Location label at (175, 290) and a
+two-stage button cloned from Mapping at (175, 306), `Separate` or `Shared`,
+sit beside Players under the player box; a click flips it. Shared makes each
+team's players share line of sight, radar and the explored map
+([DESIGN_SESSIONS_AI_SAVE "Modern allied sight"](DESIGN_SESSIONS_AI_SAVE.md#modern-allied-sight)).
+It defaults to Separate, retail's sight, persists as `alliedSight` in the
+settings file, and is carried to battle as `SkirmishConfig.AlliedSight`. The
+Survival screen, whose survivors always share, has none. The online lobby
+gives the host the same button in a skirmish room, in the Air Waves slot that
+only a Survival room shows; it defaults to Shared there, as online skirmishes
+always shared, and guests see it greyed; a Strict 3.1 room shows none and
+keeps its teams' shared sight (DESIGN_MULTIPLAYER §6.7). Tests:
+`TestTheSettingsFileKeepsAlliedSight`, `TestOnlineLobbyHostChoosesAlliedSight`
+and `TestSkirmishScreenSharesAlliedSightRetail`, which with
+`NANOLATHE_SHOT_DIR` set writes the screen as a PNG.
+
+**Start positions (Nanolathe Modern policy, user-authorized 2026-10-18).**
+Under Modern and Community 3.9 rules (`SeatRules.ChosenStarts`; a Strict 3.1
+screen and the Survival screen show none), a `Start Positions` heading
+cloned from the Location label at (305, 290) and a Place Starts button
+cloned from Select Map at (305, 306) sit beside Players and Allied Sight
+under the player box. The button reads `Auto`, or how many players are
+placed (`2 Placed`), and opens the Place Starts window over the dimmed
+setup screen: a panel (30, 24, 580×432) tiled with the original common GUI
+`BackTile` artwork, with the live players on
+the left, each with its colour logo, its row caption (`Player`, `Modern AI`,
+`Classic AI`) and `Auto` or `Placed`, and the map on the right, the usable
+terrain fitted into a 360-pixel box in the map picker's projection
+(`retailMapPreviewCanvas`), with the map's own start positions as grey dots
+and each placed player's logo at its point. A left click on a player selects
+it (its row sunken, its marker outlined); a left click on the map places the
+selected player there and moves to the next player without a point; a right
+click on a player or its marker puts it back on Auto; Clear All clears every
+point and Done, Escape or Enter closes the window and saves the points.
+Player rows and action buttons use the common `BUTTONS0` artwork and its
+released/pressed frames. Rows are widened to fit their captions; the two
+action buttons keep the native 80×20 size. The 20-pixel rows are spaced 28
+pixels apart so both instruction lines remain above the action buttons
+with all ten players shown.
+While open the window takes every pointer and key event, so nothing beneath
+reacts. Any change of the setup's map clears the points, since a point
+belongs to its map: the map picker's choice, and the fallback that replaces
+the selected downloaded map when it is deleted (`setSetupMap`). The map
+picker's preview marks the selected map's start positions for
+the current rows with small bevelled squares. The points persist with the
+rows (`start`, with `startMap`), are restored only for the selected installed
+map (a missing saved map drops its points), and travel to battle as `SkirmishPlayer.Start`
+([DESIGN_SESSIONS_AI_SAVE "Modern chosen start positions"](DESIGN_SESSIONS_AI_SAVE.md#modern-chosen-start-positions)).
+Tests: `TestTheSettingsFileKeepsEachRowsStartPoint`,
+`TestMissingSavedMapDropsChosenStarts`, `TestSetSetupMapClearsPointsOnlyForAnotherMap`,
+`TestMapRemovalProtectsWinningRetailModAndManualRoots`, `TestPlaceStartsFollowsTheRules`
+and `TestSkirmishScreenPlacesStartsOnTheMapRetail`, which with
+`NANOLATHE_SHOT_DIR` set writes the open window and the map picker as PNGs.
 
 **Computer AI (Nanolathe divergence, user decision 2026-09-25).** Each
 computer row plays the Classic or the Modern AI
@@ -2652,6 +2742,7 @@ The rows below are the battle hotkey census
 | Ctrl+S | select the own selectable units on screen, replacing |
 | Ctrl+Z | select every own unit sharing a selected definition |
 | Ctrl+F5..F8 / F5..F8 | store and recall camera bookmarks 0..3, both playing `SelectSquad` |
+| Ctrl+F11 / Ctrl+F12 | quick save to the `Quicksave` slot and quick load from it (DESIGN_SESSIONS_AI_SAVE §5); no retail binding |
 | F1 without Shift | open `UNITINFOx.GUI` for the hovered unit or the hovered build button's product |
 | F3 | glide to the message source |
 | F4 | the interface-flags bit that pins the score panel open and arms the kill/loss flash `[07 R-HUD-04 §1]` |
@@ -3803,6 +3894,43 @@ are queued per capable selected actor. An explicit target batch replaces only
 at each actor's first admitted target, and never invokes repeat-click removal.
 This is a one-time work list, not a persistent area task. Empty areas leave existing orders intact.
 
+**Nearest-first area work — user-requested input policy, 2026-10-22.** Each
+selected `canreclamate` actor — the definitions repair and reclaim resolve for
+[04 R-ORD-02 §1] — receives its own copy of the list, ordered as a
+nearest-next walk from where it stands in the committed frame: the nearest
+target first, then the target nearest that one, and so on. Distances are exact
+squared whole-unit distances with ties to the earlier publication index, so
+two builders at opposite ends of an area work inwards from their own ends
+instead of both crossing it in publication order. Every actor already works
+through an area list independently, so splitting the command changes only the
+visiting order. The other selected actors queue nothing from it; they, and an
+actor the frame cannot place or name, ride in the first command, and with no
+such actor at all the whole selection shares one command in publication
+order, as before. The order is fixed at release: it is a plan, not a re-scan
+after each job. Like formation assignment, it is computed by the host and
+carried in the command, so the session, replays and the Strict 3.1 baseline
+are unchanged; a replay recorded earlier keeps its own commands. A uniform
+grid of at least 64-unit cells, at most 256 a side, keeps a large forest drag
+near-linear; `TestDragNearestChainMatchesFullScan` checks it against the
+plain full scan, and `TestCommandDragAreaReclaimWalksNearestFirstPerWorker`
+checks the per-worker commands.
+
+*Fan-out budget.* A single-player gesture sends at most 16 commands, and at
+most 4,096 entries in all (about 144 KiB at 36 bytes an entry) unless its list
+alone is longer, in which case it sends one command; this keeps replays
+bounded. When the selection does not fit, its workers are sorted along the
+axis on which they spread wider and cut into that many contiguous runs of
+near-equal size, each walking from its middle worker. Online, the relay holds
+every seat's commands awaiting a tick together and closes the room past 64
+commands or 256 KiB (DESIGN_MULTIPLAYER §16.5.1). No per-gesture budget can
+account for the other seats, so an online gesture sends exactly one command,
+as it always did, with the same entries and size: the whole selection walks
+the list from its middle worker. These are UI budgets, not retail constants;
+`TestDragAreaGroupsKeepTheFanOutBudget` and `TestAreaCommandLimitIsOneOnline`
+check them. A single list above about 7,000 entries, which the online seat
+validation admits up to 10,000, still exceeds the relay's byte budget on its
+own, as before this change.
+
 Move accepts a left drag with Move armed, or Alt-left-drag from the idle latch
 in either mouse-interface mode. Alt is sampled on press; releasing it during
 the gesture does not turn movement into selection. Alt-click gives an explicit
@@ -3849,7 +3977,8 @@ append, footprint spacing, curve sampling, fog filtering, and zoomed overlays.
 The shell owns capture and preview in `battle_command_drag.go`; pure geometry
 lives in `battle_drag_geometry.go`. An area's `HumanOrderCommand.Targets` slice
 is copied at enqueue. The session resolves that work list in actor/target order
-and purges only at the first admitted target for each actor. Explicit formation
+and purges only at the first admitted target for each actor; the shell has
+already ordered each worker's copy nearest-first (above). Explicit formation
 handles give each mobile actor its own destination without editing selection.
 `UIWorldLine` records one non-emissive segment per traced edge inside the same
 world overlay used by placement, avoiding one recorded fill per line pixel.
@@ -4185,13 +4314,14 @@ order. They show name, stored metal/energy, capacity bars and positive income
 with the source's compact-number formatting. The upper-right minus/plus widget
 collapses the panel; rows clip above the bottom HUD. This substitutes local
 committed records for the source's multiplayer shared-data transport. The
-weather option defaults off, shows both wind and tidal rows, and adapts the
+weather option defaults off, shows only wind and tidal rows, and adapts the
 source's side-anchor/clamped layout with the retained retail wind hard limit
-5000. If the report and clock do not fit beside the resource-strip anchors,
-they occupy a backed panel just below the strip beside the left rail; compact
-displays must not clamp the report over the energy readout. Current wind and
-clock read the committed frame; bounds, tidal strength
-and reference generators are immutable battle content. Source arithmetic is
+5000. Game time belongs to the separate `+Clock` preference. If the report
+does not fit beside the resource-strip anchors, it occupies a backed panel
+just below the strip beside the left rail; compact displays must not clamp
+the report over the energy readout. Current wind reads the committed frame;
+bounds, tidal strength and reference generators are immutable battle content.
+Source arithmetic is
 recorded in [community patch engine §5.10](../research/extensions/community-patch-engine.md#510-optional-resource-and-weather-presentation).
 
 ### 3.15 Optional megamap
@@ -4834,10 +4964,13 @@ it, as an online join does: the player's own mutators stay, the mod becomes
 the saved choice, and the shell the reload builds reopens the screen and
 continues. A mod that is not installed, a different copy of it, a base
 requirement it lacks, or `--root` or `--mod-config` content is named
-instead, as is a mod that did not mount and a map the install lacks. The
-playback is then composed on a job goroutine with the optional load-time
-art, as the loading screen prepares a fresh battle, and a content reload
-waits for it. Meanwhile the status line counts *Loading the replay... n%*
+instead, as is a mod that did not mount and a map the install lacks. A
+replay recorded on a generated map that is not mounted first makes that map
+again from the recipe it recorded and mounts it, or names why it cannot
+(DESIGN_MAP_GENERATOR §10). The playback is then composed on a job
+goroutine with the optional load-time art, as the loading screen prepares a
+fresh battle, and a content reload waits for it. Meanwhile the status line
+counts *Loading the replay... n%*
 over the loading screen's six bars, Watch and Delete are greyed, and Cancel
 abandons the load. A replay this install cannot compose is reported in plain
 words (*your copy of the map differs from the recording's*, *your game files
@@ -4968,13 +5101,25 @@ rebuilt every frame. This is host presentation policy and changes nothing drawn.
 **Layout.** One unit is `min(height/900, width/1560)` pixels, so a 4:3
 window keeps the header on one line. A tab row (*Game*, *Mutators*,
 *Graphics*, *Effects*, *Controls*) and *Back* / *Apply* (with the count of
-changed cards) head the screen; under the wordmark one line names the
+changed cards) head the screen. Beside the wordmark, small and dim, is the
+build's short source revision: the commit a development build records, or the
+one the source installer places beside the executable, marked *modified* when
+the tree held uncommitted changes, and *dev build* when the build records
+none. The label fits the space left by the tabs and action buttons, so a
+modified revision cannot cover a tab. Under the wordmark one line names the
 content, rules, renderer, mutators and unit restrictions a battle started now
 would use, each part a jump to its card. The focused card fills the left: kicker, title, one
 control of its kind (lamp meter, throw switch, stepper, the three rule
 layers, side-by-side choices, or the content list), a description, a lock or
 renderer note, chips and *Compare*. The page's cards run along the bottom;
-the focused one lifts. Arrow keys choose and change, Tab pages, Space
+the focused one lifts. A page with more cards than one row holds (*Mutators*)
+lays them out in two rows of compact cards in the same height, each picture
+beside its name, value and lamps, so every card is on the screen; a compact
+card lifts half as far. Card names and compact values shrink within their
+text columns, then end in an ellipsis if the minimum size still cannot fit.
+Source tags and locks stay over the picture, with long tags fitted to its
+width, so they cannot cover a compact card's name.
+Arrow keys choose and change, Tab pages, Space
 compares, Enter applies, Esc goes back. The content list shows every
 installed mod with its version, its rule lock and whether it brings its own
 controls, and scrolls past five rows.
@@ -4986,6 +5131,10 @@ of view. Fractional wheel travel accumulates, and each whole unit moves one
 row. The wheel target includes the scrollbar column. A track press centres
 the thumb on the pointer; a thumb drag retains the original grab offset and
 continues outside the track, clamped to the first and last viewports.
+The Add-ons list and the *Get more mods* catalogue show the rows that fit and
+scroll the same way: the Add-ons list ends above the lifted cards, leaving
+room for the card's description and note, and the catalogue fills its dialog
+above *Close*.
 Action buttons and key caps borrow the base game's `BUTTONS0` raised and pressed
 frames. Their borders retain their native proportions and their interiors fill
 the settings rectangles; caption placement and the existing hit targets survive.

@@ -55,7 +55,8 @@ type Params struct {
 	ReachMix    int32 // reach_mix: 1 = production and factory choice follow reach to the plausible enemy starts (§13.1)
 	Fleet       int32 // fleet: 1 = assault fleets of destroyers and heavier hulls, a few light boats (§13.2)
 	TidalField  int32 // tidal_field: 1 = water economy buildings in fields clear of the shipyards (§13.3)
-	Growth      int32 // growth: human economy shape at full ambition, a sum of parts (§13.4)
+	Growth      int32 // growth: human economy shape at full ambition and after the long-game fallback, a sum of parts (§13.4)
+	LongGrowth  int32 // long_growth: 1 adds the growth parts after minute 20 at lower ambition; 0 restores the old full-ambition gate
 	FacFirst    int32 // fac_first: first factory family 0 = none, 1 kbot, 2 vehicle, 3 air, 4 ship, 5 drawn per game (§13.5)
 	WFacFirst   int32 // w_fac_first: other factories rate this percent below the chosen family's until one is owned
 	Expand      int32 // expand: mid-game expansion, a sum of parts (§13.10)
@@ -67,6 +68,9 @@ type Params struct {
 	Cloak       int32 // cloak: 1 = cloak-capable units cloak when threatened while energy pays (abil_cloak.go)
 	Gates       int32 // gates: 1 = a gate pair from the base to the front, dialed, carries the army (abil_gates.go)
 	Play        int32 // play: the play review's fixes, a sum of parts (README §15)
+	RadarHome   int32 // radar_home: 1 = a radar over home is urgent from minute 10 and stands at home
+	WallBuild   int32 // wall_build: 1 = wall segments in front of ground towers (econ_walls.go)
+	WallFrom    int32 // wall_from: minute from which wall segments are built
 }
 
 // ParamSpec documents one parameter.
@@ -122,7 +126,8 @@ var Specs = [...]ParamSpec{
 	{"reach_mix", 1, 0, 1, "switch: reach judged over the plausible enemy starts; stranded factories make a home guard only, and no more of them"},
 	{"fleet", 1, 0, 1, "switch: against an enemy navy, assault fleets of destroyers and heavier hulls, light boats capped to a few"},
 	{"tidal_field", 1, 0, 1, "switch: tidal generators and other water economy in fields clear of the shipyards' exits"},
-	{"growth", 16, 0, 31, "human economy shape at full ambition, a sum of parts: 1 expansion, 2 tech-2 timeline, 4 constructors per extractor, 8 factories per income, 16 constructor floor (at every ambition)"},
+	{"growth", 16, 0, 31, "human economy shape at full ambition and after the long-game fallback, a sum of parts: 1 expansion, 2 tech-2 timeline, 4 constructors per extractor, 8 factories per income, 16 constructor floor (at every ambition)"},
+	{"long_growth", 1, 0, 1, "switch: after minute 20 the lower personas also play expansion, tech-2, constructors and factories per income; 0 restores the old full-ambition gate"},
 	{"fac_first", 0, 0, 5, "first factory family: 0 none, 1 kbot lab, 2 vehicle plant, 3 air plant, 4 shipyard, 5 drawn per game"},
 	{"w_fac_first", 300, 100, 1000, "percent by which other factories rate below the first-factory family's until one of it is owned"},
 	{"expand", 0, 0, 31, "mid-game expansion, a sum of parts: 1 extractors on the expansion pace, 2 constructors follow the expansion, 4 failed spots held until seen empty, 8 contested spots behind our army, 16 factories follow the income while metal banks (§13.10)"},
@@ -134,6 +139,9 @@ var Specs = [...]ParamSpec{
 	{"cloak", 1, 0, 1, "switch: cloak-capable units, the commander included, cloak while threatened (or authored to start cloaked) and the energy store can pay (DESIGN_SESSIONS_AI_SAVE \"Modern AI commands\")"},
 	{"gates", 1, 0, 1, "switch: a gate in the base and one toward the front once the army travels and income pays for both, the base gate dialed to the front one, ground units sent through it when that shortens their trip (DESIGN_SESSIONS_AI_SAVE \"Modern AI gates\")"},
 	{"play", 7, 0, 15, "the play review's changes, each measured in mirrors against the brain without it, a sum of parts: 1 a factory whose army cannot reach the enemy is not the land constructor source while a land or hover factory that reaches is on offer, 2 the first constructor goes ahead of combat units at a shipyard or air plant, 4 an extractor waits for energy coverage while the energy store is below half, 8 the launch value's army curve scaled by our income (README §15)"},
+	{"radar_home", 1, 0, 1, "switch: from minute 10, while no stationary radar stands, is under way or is assigned over home, one there is urgent (need 4000 instead of 1000) and stands a quarter of the way to the front instead of halfway between the front and the rally point (DESIGN_SESSIONS_AI_SAVE \"Long games, low action budgets and teams\")"},
+	{"wall_build", 1, 0, 1, "switch: with the defense plan, from minute wall_from a constructor with nothing better to do builds three wall pieces across the approach in front of a completed ground tower in a zone enemy ground forces have approached, one segment per tower and per 90 s (DESIGN_SESSIONS_AI_SAVE \"Modern AI walls\")"},
+	{"wall_from", 12, 0, 120, "minute from which wall_build builds segments"},
 }
 
 const numParams = len(Specs)
@@ -146,9 +154,9 @@ func (p *Params) slots() [numParams]*int32 {
 		&p.TravelHalf, &p.ThreatHalf, &p.Hysteresis, &p.EcoEarly, &p.EcoLate,
 		&p.EcoRamp, &p.AttackMin, &p.AttackGrow, &p.AttackRatio, &p.ComRadius,
 		&p.SpotsPerCon, &p.FacTime, &p.WAir, &p.Naval, &p.Air, &p.Tech, &p.TechTime, &p.TechIncome, &p.WUpgrade, &p.Layout, &p.WReclaim,
-		&p.ReachMix, &p.Fleet, &p.TidalField, &p.Growth, &p.FacFirst, &p.WFacFirst, &p.Expand, &p.ExpandFrom, &p.Army, &p.Metal, &p.FacBackoff,
+		&p.ReachMix, &p.Fleet, &p.TidalField, &p.Growth, &p.LongGrowth, &p.FacFirst, &p.WFacFirst, &p.Expand, &p.ExpandFrom, &p.Army, &p.Metal, &p.FacBackoff,
 		&p.Breadth,
-		&p.Cloak, &p.Gates, &p.Play,
+		&p.Cloak, &p.Gates, &p.Play, &p.RadarHome, &p.WallBuild, &p.WallFrom,
 	}
 }
 

@@ -27,6 +27,10 @@ func itoaTest(n int) string { return string(rune('0' + n)) }
 
 func mountFixtureArchives(t *testing.T, archives ...map[string]string) *vfs.FS {
 	t.Helper()
+	// Cleanups run last first: the directory is made before Close is
+	// registered so the archives are closed before it is removed, which
+	// Windows refuses while a file in it is open.
+	dir := t.TempDir()
 	fs := vfs.New()
 	t.Cleanup(func() { fs.Close() })
 	for i, files := range archives {
@@ -34,7 +38,7 @@ func mountFixtureArchives(t *testing.T, archives ...map[string]string) *vfs.FS {
 		for p, data := range files {
 			list = append(list, vfs.ArchiveFile{Path: p, Data: []byte(data)})
 		}
-		name := filepath.Join(t.TempDir(), "fixture"+itoaTest(i)+".ufo")
+		name := filepath.Join(dir, "fixture"+itoaTest(i)+".ufo")
 		f, err := os.Create(name)
 		if err != nil {
 			t.Fatal(err)

@@ -365,6 +365,7 @@ var (
 	rowVTOLReclaimUnit  ID
 	rowRepairPatrol     ID
 	rowVTOLRepairPatrol ID
+	rowResurrect        ID
 )
 
 func resolveRows() {
@@ -395,6 +396,7 @@ func resolveRows() {
 	rowVTOLReclaimUnit = Lookup("VTOL_ReclaimUnit")
 	rowRepairPatrol = Lookup("RepairPatrol")
 	rowVTOLRepairPatrol = Lookup("VTOL_RepairPatrol")
+	rowResurrect = Lookup("Resurrect")
 }
 
 // handlerInstallers is the ordered list of per-family handler installers — the

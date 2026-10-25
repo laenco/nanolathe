@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/nanolathe-gg/nanolathe/internal/content"
 	"github.com/nanolathe-gg/nanolathe/internal/frame"
 	"github.com/nanolathe-gg/nanolathe/internal/gameplay"
 	"github.com/nanolathe-gg/nanolathe/internal/hud"
@@ -37,7 +38,14 @@ func TestRetailDefeatedScorePanelCapture(t *testing.T) {
 				rows[i] = frame.PlayerRow{Present: true, Controller: 2, Name: fmt.Sprintf("Player %d", i+1), Logo: uint8(i), LiveUnits: i % 2, Kills: 13 * i, Losses: 7 * i, Rank: uint8(i)}
 			}
 			rows[0].Controller = 1 // an eliminated local row also stays readable
+			if count == 3 {
+				rows[0].Name, rows[1].Name, rows[2].Name = "Player", "TALON", "Rumad"
+			}
+			rows[0].Side = 2
+			rows[1].Side = 0
+			rows[2].Side = 1
 			c, h, b := scorePanelFixtureWith(t, false, rows, 0, count)
+			b.cat = &content.Catalog{Sides: []*content.SideDef{{Name: "TALON"}, {Name: "Rumad"}, {Name: "TLL"}}}
 			b.sess.Gameplay = mode
 			h.modalFont = loadGAFFontOptional(cs.fs, "anims/hattfont12.gaf", "score capture font")
 			h.logos = loadGAFOptional(cs.fs, "textures/logos.gaf", "score capture logos")

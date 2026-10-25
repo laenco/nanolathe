@@ -400,6 +400,15 @@ func unitSemanticDigest(u *UnitDef) [32]byte {
 	d.texts([]string{u.TransportedExplodeAs, u.TransportedSelfDestructAs,
 		u.PreviewPieces, u.PreviewPiecesS, u.PreviewPiecesE, u.PreviewPiecesN, u.PreviewPiecesW, u.PreviewObject3D})
 	d.boolean(u.PreviewFaceOpponent)
+	// Builder speed's recorded factor drives the builder's script timing and
+	// approach. It is encoded only when present, so every definition prepared
+	// without it keeps its digest (docs/DESIGN_MODS_MUTATORS.md "Builder
+	// speed").
+	if !u.BuilderSpeed.IsIdentity() {
+		d.text("builderSpeed")
+		d.u8(u.BuilderSpeed.Num)
+		d.u8(u.BuilderSpeed.Den)
+	}
 	for _, link := range [...]*WeaponDef{
 		u.Weapon1Def, u.Weapon2Def, u.Weapon3Def, u.ExplodeAsDef, u.SelfDestructAsDef,
 		u.TransportedExplodeAsDef, u.TransportedSelfDestructAsDef,
@@ -611,8 +620,12 @@ func mutatorStepIndex(f Factor) (uint8, bool) {
 	return 0, false
 }
 
-// mutatorVector is the eleven step indices in the published field order.
-func mutatorVector(m Mutators) ([11]uint8, bool) {
+// mutatorVector is the eleven shared-list step indices in the published
+// field order, followed by Builder speed's index on its own list
+// (BuilderSpeedStepIndex), 0 for the identity. The manifest writes that last
+// index only when it is not zero, so every digest made before Builder speed
+// existed, and every one made without it, is unchanged.
+func mutatorVector(m Mutators) ([11]uint8, uint8, bool) {
 	var out [11]uint8
 	for i, f := range [...]Factor{
 		m.BuildSpeed, m.BuildCost, m.Health, m.Damage, m.AreaOfEffect, m.Sight,
@@ -620,11 +633,41 @@ func mutatorVector(m Mutators) ([11]uint8, bool) {
 	} {
 		step, ok := mutatorStepIndex(f)
 		if !ok {
-			return out, false
+			return out, 0, false
 		}
 		out[i] = step
 	}
-	return out, true
+	builder, ok := BuilderSpeedStepIndex(m.BuilderSpeed)
+	return out, builder, ok
+}
+
+// BuilderSpeedStepIndex maps a Builder speed factor to its index on
+// BuilderSpeedSteps — 1, 2, 3, 5, 8, 20 as 0..5 — with the zero value and 1/1
+// both the identity, 0. The online configuration's Builder speed record and
+// the simulation manifest share it (docs/DESIGN_MODS_MUTATORS.md "Builder
+// speed"). A factor off the list reports false.
+func BuilderSpeedStepIndex(f Factor) (uint8, bool) {
+	if f.IsIdentity() {
+		return 0, true
+	}
+	for i, step := range BuilderSpeedSteps {
+		if f == step {
+			return uint8(i), true
+		}
+	}
+	return 0, false
+}
+
+// BuilderSpeedStep is the factor at index on BuilderSpeedSteps, the zero
+// value for the identity at 0; ok is false off the list.
+func BuilderSpeedStep(index uint8) (Factor, bool) {
+	if int(index) >= len(BuilderSpeedSteps) {
+		return Factor{}, false
+	}
+	if index == 0 {
+		return Factor{}, true
+	}
+	return BuilderSpeedSteps[index], true
 }
 
 // sortedKeys returns a map's keys in byte order (I1).

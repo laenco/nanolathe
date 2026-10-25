@@ -34,6 +34,31 @@ fi
 STATICCHECK_VERSION=2026.2.1
 DEADCODE_VERSION=v0.50.0
 
+# Build and run the analyzers with exactly the module's own Go release.
+# `go run pkg@version` and `go install pkg@version` otherwise take their
+# toolchain from the tool's go.mod — under auto switching, even with a
+# `<release>+auto` setting, the newest patch of the release that file names —
+# so on a host whose system Go is older than the module's, an analyzer is built
+# with an older Go than this module needs and cannot type-check it. `go env
+# GOVERSION` in the module is the release the module selects. The pinned tool
+# versions require no newer release.
+toolchain=$(go env GOVERSION)
+case "$toolchain" in
+go[0-9]*)
+	GOTOOLCHAIN="$toolchain"
+	export GOTOOLCHAIN
+	;;
+esac
+
+# The production-reachability baseline describes one platform's binaries:
+# some code is reached only from darwin, js or unix files, so the set differs
+# by platform. It was written on darwin/arm64, and every host analyses that
+# platform. deadcode type-checks without cgo there, which darwin's Ebitengine
+# does not need. Linux- and Windows-only code is therefore outside the
+# ratchet; the tests-included run below still covers the host's own files.
+DEADCODE_PLATFORM_GOOS=darwin
+DEADCODE_PLATFORM_GOARCH=arm64
+
 # The -f template prints "<package path> <function>" per unreachable function
 # and nothing else. deadcode's default format carries file:line positions,
 # which would make the baseline churn on every unrelated edit above a listed
@@ -58,13 +83,22 @@ done
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 
+# deadcode is built once for the host, so the baseline run can analyse
+# another platform with it. The `go: ` lines are the module-cache download
+# chatter a cold cache prints.
+GOBIN="$work/bin" go install "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}" 2>&1 | grep -v '^go: ' || true
+deadcode="$work/bin/deadcode"
+if [ ! -x "$deadcode" ]; then
+	echo "nanolathe: deadcode build failed: logical path golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}, providers searched [module cache, module proxy], expected an executable" >&2
+	exit 1
+fi
+
 # production_unreachable writes the sorted, position-free deadcode report for
-# the shipped binaries to $1. The `go: ` lines are the module-cache download
-# chatter `go run pkg@version` emits on a cold cache.
+# the shipped binaries of the baseline's platform to $1.
 production_unreachable() {
-	go run "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}" \
-		-tags retail -f "$DEADCODE_FORMAT" ./... 2>&1 |
-		grep -v '^go: ' | grep -v '^[[:space:]]*$' | LC_ALL=C sort >"$1"
+	GOOS="$DEADCODE_PLATFORM_GOOS" GOARCH="$DEADCODE_PLATFORM_GOARCH" CGO_ENABLED=0 \
+		"$deadcode" -tags retail -f "$DEADCODE_FORMAT" ./... 2>&1 |
+		grep -v '^[[:space:]]*$' | LC_ALL=C sort >"$1"
 }
 
 if [ "$update_baseline" = "1" ]; then
@@ -72,7 +106,7 @@ if [ "$update_baseline" = "1" ]; then
 	production_unreachable "$work/current"
 	{
 		echo "# Functions no shipped binary can reach, from"
-		echo "#   deadcode -tags retail ./...   (tests are NOT roots)"
+		echo "#   GOOS=$DEADCODE_PLATFORM_GOOS GOARCH=$DEADCODE_PLATFORM_GOARCH CGO_ENABLED=0 deadcode -tags retail ./...   (tests are NOT roots)"
 		echo "#"
 		echo "# Shrink-only ratchet enforced by tools/lint. An entry here is reachable"
 		echo "# from tests but from no main package: test infrastructure, a superseded"
@@ -93,7 +127,7 @@ go run "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}" -tags retail 
 echo "==> deadcode (retail tag, tests included)"
 # deadcode prints one line per unreachable function and exits 0; the gate
 # fails on any output.
-dead=$(go run "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}" -tags retail -test ./... 2>&1 | grep -v '^go: ' || true)
+dead=$("$deadcode" -tags retail -test ./... 2>&1 || true)
 if [ -n "$dead" ]; then
 	echo "unreachable code:"
 	echo "$dead"

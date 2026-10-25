@@ -149,6 +149,15 @@ type UnitDef struct {
 	// already carries the authored bytes into both catalog identities, so the
 	// derived flag adds none (DESIGN_UNITS_ORDERS_COB "Modern infection").
 	NanolatheInfector bool
+	// BuilderSpeed is the Builder speed mutator's factor, recorded only on the
+	// builder definitions of a mutated per-battle clone. It is Nanolathe policy,
+	// not an authored key: the zero value is the identity, which every compiled
+	// catalog carries. Unlike every other mutated field, it is read by engine
+	// code rather than by retail arithmetic: the builder's script runs its
+	// build-animation functions this many times faster, and a mobile ground
+	// builder starts placement once in reach
+	// (docs/DESIGN_MODS_MUTATORS.md "Builder speed").
+	BuilderSpeed Factor
 
 	// Economy [02 "Unit record"].
 	BuildCostEnergy float32 // integer parsed, single-float store, default 0 [02 R-KEYS-01 §5]

@@ -38,6 +38,10 @@ func (g *gameShell) disableUnavailableFrontendEntries(window *gui.Window, mode s
 		disable("AnyMsn", !campaign || g.missionMenuLayout() != missionLayoutPlayAny)
 		disable("Options", !g.frontendFilesPresent(retailOptionsGUI, retailOptionsBackdrop))
 		disable("LoadGame", !g.frontendLoadDialogAvailable())
+	case modeMenuMap:
+		// An online room's map comes to every seat as content it can
+		// fetch; a generated one does not yet (DESIGN_MAP_GENERATOR §11).
+		disable("GENMAP", !g.mapGeneratorAvailable())
 	}
 }
 

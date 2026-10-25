@@ -44,6 +44,7 @@ type staticInfo struct {
 	t2        bool              // tech-2 factory: makes an advanced constructor
 	hull      bool              // naval combat product (fleet)
 	light     bool              // light boat: a quarter of its shipyard's heaviest hull or less (fleet)
+	wall      bool              // a wall piece (aikit.WallPiece; econ_walls.go)
 }
 
 // commitKind is what a builder was last told to do.
@@ -67,9 +68,11 @@ const (
 	cClear   // reclaiming wrecks and street features
 	cModule  // an upgrade module (upgrades.go)
 	cGate    // a gate of the gate network (abil_gates.go)
+	cBreach  // reclaiming an enemy wall the army is held at (econ_breach.go)
+	cWall    // a wall segment in front of a tower (econ_walls.go)
 )
 
-var commitNames = [...]string{"none", "mex", "energy", "maker", "storage", "factory", "defense", "radar", "strategic", "upgrade", "assist", "guard", "retreat", "unblock", "clear", "module", "gate"}
+var commitNames = [...]string{"none", "mex", "energy", "maker", "storage", "factory", "defense", "radar", "strategic", "upgrade", "assist", "guard", "retreat", "unblock", "clear", "module", "gate", "breach", "wall"}
 
 func (c commitKind) build() bool { return c >= cMex && c <= cUpgrade || c == cModule || c == cGate }
 
@@ -141,6 +144,23 @@ func onPad(f *aikit.OwnUnit, x, z int32) bool {
 	return x >= f.X-hx && x <= f.X+hx && z >= f.Z-hz && z <= f.Z+hz
 }
 
+// canGuard reports whether a unit accepts Guard (code 7): a definition
+// authored canguard=0 refuses it, so no layer should spend an action on
+// one. A unit without a compiled definition (unit tests) is taken as able.
+func canGuard(info *aikit.UnitInfo) bool {
+	return info.Def == nil || info.Def.CanGuard
+}
+
+// domainOf indexes shared.idleCons: 1 for a builder that must stand in
+// water, 0 for every other (land, hover and air builders can take land
+// work). An idle naval constructor is no reason to withhold a land one.
+func domainOf(si *staticInfo) int {
+	if si.water {
+		return 1
+	}
+	return 0
+}
+
 // shared is the state the three policies share: static tables, the
 // per-think economic and enemy model, commitments and the action budget.
 type shared struct {
@@ -158,6 +178,7 @@ type shared struct {
 	waterX     int32
 	waterZ     int32
 	homeLocked bool
+	comReach   int64 // home to the comLeashSpots-th nearest land metal spot (comLeash)
 
 	// Per think.
 	tick      uint32
@@ -203,6 +224,8 @@ type shared struct {
 	cons           int32 // mobile builders able to build economy (built)
 	consPending    int32
 	builders       int32
+	idleBuilders   int32    // built builders with no productive order this think
+	idleCons       [2]int32 // built economy constructors with no productive order: [0] land, [1] water (staticInfo.water)
 	freeSafe       int32
 	ownAA          int64
 	scouts         int32
@@ -283,6 +306,7 @@ type shared struct {
 	yardCls     [maxFields]uint64 // per yard site: the classes that reach it from home (tidal_field)
 	mexBuilt    int32             // own finished extractors
 	deadFacs    int32             // own factories written off (exit walled in)
+	blockedFacs int32             // own factories with a stalled pad this think
 	facDefs     []int32           // factory definitions (growth)
 	facFam      []int8            // per definition: a factory's family (fac_first)
 	firstFam    int32             // this game's first-factory family, famNone for none (fac_first)
@@ -321,6 +345,7 @@ func (s *shared) setup(k *aikit.Kit) {
 		si.water = d != nil && d.MinWaterDepth > 0
 		si.costMeq = int64(u.Metal) + int64(u.Energy)*10/er
 		si.aaOnly = u.AirDPS > 0 && u.AirDPS*2 >= u.DPS
+		si.wall = aikit.WallPiece(u)
 		si.gndDPS = groundDPS(u)
 		si.combat = u.Role.Has(aikit.RoleCombat) && !u.Role.Any(aikit.RoleKamikaze|aikit.RoleNaval|aikit.RoleTransport) && !si.water
 		if u.Role.Has(aikit.RoleMobile) && u.Role.Has(aikit.RoleBuilder) {
@@ -665,10 +690,14 @@ func (s *shared) observeFactories(b *core.Board) {
 			s.bpFac -= int64(f.Info.BuildPower)
 		}
 	}
-	s.deadFacs = 0
+	s.deadFacs, s.blockedFacs = 0, 0
 	for _, fi := range b.Factories {
-		if s.fstateOf(&o.Own[fi]).dead {
+		fs := s.fstateOf(&o.Own[fi])
+		if fs.dead {
 			s.deadFacs++
+		}
+		if fs.blocked && !fs.dead {
+			s.blockedFacs++
 		}
 	}
 }
@@ -702,6 +731,7 @@ func (s *shared) observe(b *core.Board) {
 	s.touched = s.touched[:0]
 	s.bpFac, s.bpBld, s.upkeepE, s.mexUpkeep, s.firmE, s.windE = 0, 0, 0, 0, 0, 0
 	s.cons, s.consPending, s.ownAA, s.scouts, s.armyCount, s.airScouts = 0, 0, 0, 0, 0, 0
+	s.idleBuilders, s.idleCons = 0, [2]int32{}
 	s.mexBuilt = 0
 	var consFrames int32
 	for i := range o.Own {
@@ -735,6 +765,12 @@ func (s *shared) observe(b *core.Board) {
 			s.bpBld += int64(info.BuildPower)
 			if s.info[info.Index].canEco && !r.Has(aikit.RoleCommander) {
 				s.cons++
+			}
+			if u.Order == aikit.OrderIdle {
+				s.idleBuilders++
+				if si := &s.info[info.Index]; si.canEco && !r.Has(aikit.RoleCommander) {
+					s.idleCons[domainOf(si)]++
+				}
 			}
 		}
 		s.upkeepE += int64(info.EnergyUse) * 1000
@@ -957,6 +993,7 @@ func (s *shared) observePlaces(b *core.Board) {
 			}
 		}
 		s.haveWater = best >= 0
+		s.comReach = spotReach(m, hx, hz, comLeashSpots)
 	}
 	// Danger at own buildings and the building nearest the enemy.
 	s.dangerNow = 0

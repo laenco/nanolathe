@@ -9,7 +9,7 @@ import (
 )
 
 // TestPatrolFeatureRestrictedScanMatchesFullScan locks the Modern patrol's
-// reclaim pick under ForEachFeatureNear: a traversal that honours the region
+// scored reclaim pick under ForEachFeatureNear: a traversal that honours the region
 // — skipping every feature outside the square FeatureRegion describes — gives
 // the same pick as one that visits every feature, for random maps, builders,
 // sight radii (negative included) and positions out to the edges of the
@@ -78,12 +78,21 @@ func TestPatrolFeatureRestrictedScanMatchesFullScan(t *testing.T) {
 				features[i].Reclaimable = false // leave the boundary ones as the only candidates
 			}
 		}
-		near, nearFound := modernPatrolFeature(b, u, resources, true)
-		full, fullFound := modernPatrolFeature(b, u, resources, false)
-		if near != full || nearFound != fullFound {
-			t.Fatalf("round %d: the restricted scan picked %+v (%v), the full scan %+v (%v)", round, near, nearFound, full, fullFound)
+		// A random leg exercises the route leash and the score's detour on
+		// the same traversal; claims and memory stay empty.
+		offset := func() numeric.Fixed { return numeric.Fixed(int64(int32(next(2048))-1024) << 16) }
+		leg := &Node{ID: rowRepairPatrol, GoalX: u.X + offset(), GoalZ: u.Z + offset()}
+		q := &Queue{primary: []*Node{leg, {ID: rowRepairPatrol, GoalX: coord(), GoalZ: coord()}}}
+		if round%3 == 0 {
+			q.primary = q.primary[:1] // no previous waypoint: no leash
 		}
-		if fullFound {
+		s := newModernPatrolScore(q, u, leg)
+		near := modernPatrolFeature(b, &s, resources, nil, true)
+		full := modernPatrolFeature(b, &s, resources, nil, false)
+		if near != full {
+			t.Fatalf("round %d: the restricted scan picked %+v, the full scan %+v", round, near, full)
+		}
+		if full.found {
 			picks++
 		}
 	}

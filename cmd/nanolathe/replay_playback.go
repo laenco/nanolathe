@@ -140,7 +140,7 @@ func replayContent(cs *contentSet, h replay.Header, progress content.Progress) (
 	if !h.Kind.Online() && !addonsSatisfied(cs, replayAddonIdentities(h.Addons), libraryAddonsOf()) {
 		return c, nil, &replayAddonsError{recorded: h.Addons}
 	}
-	config, err := session.DecodeMatchConfig(h.Config)
+	config, err := h.Configuration()
 	if err != nil || len(config.Request().RoomContent) == 0 {
 		// An undecodable configuration is replay.Compose's refusal to name.
 		return c, nil, nil

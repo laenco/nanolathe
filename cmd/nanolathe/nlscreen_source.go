@@ -279,11 +279,13 @@ func (s *nlScreen) drawSource(screen *ebiten.Image, c *nlCard, x, y, a float64) 
 	}
 }
 
-// drawCardSource tags a carousel card with its marker.
-func (s *nlScreen) drawCardSource(screen *ebiten.Image, c *nlCard, r screenkit.Rect, a float64) {
+// drawCardSource keeps the marker over the card's picture. Compact cards
+// put their name beside the picture, so the marker must fit within it
+// (DESIGN_INTERFACE_HUD_INPUT §3.17).
+func (s *nlScreen) drawCardSource(screen *ebiten.Image, c *nlCard, pic screenkit.Rect, a float64) {
 	u := s.u()
 	if s.cardLocked(*c) {
-		s.padlock(screen, r.X+r.W-30*u, r.Y+14*u, 14*u, nlAmber, false)
+		s.padlock(screen, pic.X+pic.W-20*u, pic.Y+4*u, 14*u, nlAmber, false)
 		return
 	}
 	tag := ""
@@ -298,8 +300,9 @@ func (s *nlScreen) drawCardSource(screen *ebiten.Image, c *nlCard, r screenkit.R
 		return
 	}
 	st := screenkit.Style{Size: 9.5 * u, Tracking: 0.12, Top: alphaC(col, a), Upper: true}
+	tag, st = s.ui.fit(s.fonts.Display, tag, st, pic.W-20*u, 8.5*u)
 	tw := s.fonts.Display.Measure(tag, st) + 12*u
-	tr := screenkit.Rect{X: r.X + 14*u, Y: r.Y + 16*u, W: tw, H: 18 * u}
+	tr := screenkit.Rect{X: pic.X + 4*u, Y: pic.Y + 6*u, W: tw, H: 18 * u}
 	screenkit.Fill(screen, tr, color.RGBA{6, 12, 6, uint8(210 * a)})
 	screenkit.Outline(screen, tr, 1*u, alphaC(col, 0.6*a))
 	s.fonts.Display.Draw(screen, tag, tr.X+6*u, tr.Y+13*u, st)

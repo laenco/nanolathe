@@ -1,6 +1,8 @@
 package utility
 
 import (
+	"slices"
+
 	"github.com/nanolathe-gg/nanolathe/internal/aikit"
 	"github.com/nanolathe-gg/nanolathe/internal/aikit/core"
 	"github.com/nanolathe-gg/nanolathe/internal/pool"
@@ -87,12 +89,13 @@ const retreatTicks = 450
 
 // Economy assigns idle builders by scoring every candidate build.
 type Economy struct {
-	s     *shared
-	one   [1]pool.Handle
-	ring  [8]decision
-	next  int
-	rot   int
-	fails int32
+	s       *shared
+	one     [1]pool.Handle
+	helpers []pool.Handle
+	ring    [8]decision
+	next    int
+	rot     int
+	fails   int32
 	// scratch per decision
 	bestQ, bestDef int64
 	bestQR         int64         // best reach-weighted factory quality on offer (switches on)
@@ -100,6 +103,8 @@ type Economy struct {
 	def            defPlan       // the proactive defense plan's state (defense*.go)
 	strategic      strategicPlan // stockpile ammunition and deliberate ground targets
 	ab             abilities     // cloak and the gate network (abil*.go)
+	br             breachState   // constructors sent to enemy walls (econ_breach.go)
+	wl             wallState     // wall segments ordered (econ_walls.go)
 	// fac_backoff: factory site searches that found no site lately.
 	facOff     [facOffSlots]facBackoff
 	facOffNext int
@@ -133,20 +138,36 @@ func (e *Economy) Init(b *core.Board) { e.s.setup(b.K) }
 func (e *Economy) Plan(b *core.Board) {
 	s := e.s
 	o := b.O
-	// Keep one action for the army and one per factory that will want one.
-	budget := int(s.budget) - 1
+	// Keep one action for the army only while the base is threatened, and
+	// one for a factory with an empty queue. The old form reserved one for
+	// the army unconditionally and one per short-queue factory (up to two):
+	// at the Easy persona's one-action budget that left nothing for a
+	// builder, which is how a forty-builder pool sat on Standby all game.
+	// The commander's retreat comes before both: losing it loses the game,
+	// and while enemies are near home the reserves would leave a one-action
+	// persona nothing for it.
+	budget := int(s.budget)
+	if b.Commander >= 0 && budget > 0 && e.retreat(b, b.Commander) {
+		budget--
+	}
+	if b.NearHomeThreat > 0 && budget > 0 {
+		budget--
+	}
+	if budget > 0 {
+		budget -= e.strategic.service(b, budget)
+	}
 	nf := 0
 	for _, fi := range b.Factories {
-		if o.Own[fi].QueueLen < 2 && nf < 2 {
-			nf++
+		f := &o.Own[fi]
+		fs := s.fstateOf(f)
+		if f.QueueLen == 0 && !fs.blocked && !fs.dead {
+			nf = 1
+			break
 		}
 	}
 	budget -= nf
 	if att := int(b.K.Persona.Attention); budget > att {
 		budget = att
-	}
-	if budget > 0 {
-		budget -= e.strategic.service(b, budget)
 	}
 	// A build issued last think that left its builder idle failed to place.
 	// When the batch it went out in reports a search that found no site, a
@@ -195,11 +216,19 @@ func (e *Economy) Plan(b *core.Board) {
 		}
 	}
 	budget -= e.abilities(b, budget) // cloak and gates (abil.go)
+	budget -= e.breach(b, budget)    // a wall the army is held at (econ_breach.go)
+	budget -= e.walls(b, budget)     // wall segments in front of towers (econ_walls.go)
 	if s.p.Layout != 0 {
 		e.clearFailures(b)
 		if budget > 0 {
 			budget -= e.unblock(b, budget)
 		}
+	}
+	// Only after the failures above have consumed the previous think's
+	// build commitments: grouping an idle builder must not hide a failed
+	// site from the backoff, placement-failure and stuck-builder paths.
+	if budget > 0 && e.rescueIdle(b) {
+		budget--
 	}
 	e.rot++
 	for j := 0; j < n && budget > 0; j++ {
@@ -224,6 +253,151 @@ func (e *Economy) Plan(b *core.Board) {
 		if e.decide(b, u, c, reassess) {
 			budget--
 		}
+	}
+}
+
+// rescueIdle spends one action to put idle builders to work. At a low APM
+// the per-builder loop can issue only one assignment per think, so a pool
+// of idle constructors otherwise never drains. It tries, in order: a
+// producing factory (group Guard), then a damaged own or allied unit or a
+// nanoframe (group Repair). The commander is left out of every group.
+// Reclaiming stays with the per-builder decision (evalClear), which scores
+// a clear by what it yields and rests clearing after one that found
+// nothing: a group fallback has no such check, and an executor refusal
+// would repeat every think.
+func (e *Economy) rescueIdle(b *core.Board) bool {
+	s := e.s
+	if s.idleBuilders < 2 {
+		return false
+	}
+	if e.rescueFactory(b) {
+		return true
+	}
+	// Repairing is useful after the opening, but its group command competes
+	// with the one action a low-APM persona has for economy. Leave it off
+	// until the long game; factory aid above still runs.
+	if s.tick < growthFallbackMinute*1800 {
+		return false
+	}
+	return e.rescueRepair(b)
+}
+
+// rescueFactory groups idle builders on the nearest producing factory.
+func (e *Economy) rescueFactory(b *core.Board) bool {
+	s := e.s
+	o := b.O
+	best := int32(-1)
+	bestN := 0
+	for _, fi := range b.Factories {
+		f := &o.Own[fi]
+		fs := s.fstateOf(f)
+		if f.QueueLen == 0 || fs.blocked || fs.dead {
+			continue
+		}
+		n := 0
+		for _, bi := range b.Builders {
+			u := &o.Own[bi]
+			if u.Order != aikit.OrderIdle || u.Info.Role.Has(aikit.RoleCommander) || !canGuard(u.Info) {
+				continue
+			}
+			if aikit.Dist2(u.X, u.Z, f.X, f.Z) <= 1200*1200 {
+				n++
+			}
+		}
+		if n > bestN {
+			best, bestN = fi, n
+		}
+	}
+	if best < 0 || bestN < 2 {
+		return false
+	}
+	f := &o.Own[best]
+	e.helpers = e.helpers[:0]
+	for _, bi := range b.Builders {
+		u := &o.Own[bi]
+		if u.Order != aikit.OrderIdle || u.Info.Role.Has(aikit.RoleCommander) || !canGuard(u.Info) {
+			continue
+		}
+		if aikit.Dist2(u.X, u.Z, f.X, f.Z) > 1200*1200 {
+			continue
+		}
+		e.helpers = append(e.helpers, u.H)
+	}
+	if len(e.helpers) < 2 {
+		return false
+	}
+	b.K.Guard(e.helpers, f.H, false)
+	e.commitHelpers(b, cGuard, f.H, f.X, f.Z)
+	return true
+}
+
+// rescueRepair groups idle builders on a damaged own or allied unit, or on
+// an unfinished frame. A full-health target is left alone: the resolver
+// would reject the repair.
+func (e *Economy) rescueRepair(b *core.Board) bool {
+	o := b.O
+	best := pool.Handle(0)
+	bestN := 0
+	var bx, bz int32
+	consider := func(h pool.Handle, info *aikit.UnitInfo, x, z, hp, maxHP int32, built bool) {
+		if info == nil || built && (hp <= 0 || hp >= maxHP) {
+			return
+		}
+		n := 0
+		for _, bi := range b.Builders {
+			u := &o.Own[bi]
+			if u.H == h || u.Order != aikit.OrderIdle || u.Info.Role.Has(aikit.RoleCommander) {
+				continue
+			}
+			if aikit.Dist2(u.X, u.Z, x, z) <= 1200*1200 {
+				n++
+			}
+		}
+		if n > bestN {
+			best, bestN, bx, bz = h, n, x, z
+		}
+	}
+	for i := range o.Own {
+		u := &o.Own[i]
+		consider(u.H, u.Info, u.X, u.Z, u.HP, u.MaxHP, u.Built)
+	}
+	for i := range o.Allies {
+		u := &o.Allies[i]
+		consider(u.H, u.Info, u.X, u.Z, u.HP, u.MaxHP, u.Built)
+	}
+	if best == 0 || bestN < 2 {
+		return false
+	}
+	e.helpers = e.helpers[:0]
+	for _, bi := range b.Builders {
+		u := &o.Own[bi]
+		if u.H == best || u.Order != aikit.OrderIdle || u.Info.Role.Has(aikit.RoleCommander) {
+			continue
+		}
+		if aikit.Dist2(u.X, u.Z, bx, bz) > 1200*1200 {
+			continue
+		}
+		e.helpers = append(e.helpers, u.H)
+	}
+	if len(e.helpers) < 2 {
+		return false
+	}
+	b.K.Repair(e.helpers, best, false)
+	e.commitHelpers(b, cAssist, best, bx, bz)
+	return true
+}
+
+// commitHelpers records the group order on exactly the builders it went
+// to (e.helpers).
+func (e *Economy) commitHelpers(b *core.Board, kind commitKind, target pool.Handle, x, z int32) {
+	for _, h := range e.helpers {
+		i := b.Index(h)
+		if i < 0 {
+			continue
+		}
+		u := &b.O.Own[i]
+		c := e.s.commitOf(u)
+		*c = commitment{def: u.Info, gen: u.Gen, kind: kind, spot: -1, target: target, x: x, z: z, tick: e.s.tick}
 	}
 }
 
@@ -357,7 +531,7 @@ func (e *Economy) retreat(b *core.Board, i int32) bool {
 	s := e.s
 	u := &b.O.Own[i]
 	c := s.commitOf(u)
-	if c.kind == cRetreat && s.tick-c.tick < retreatTicks {
+	if c.kind == cRetreat && s.tick-c.tick < retreatTicks || s.breaching(u, c) {
 		return false
 	}
 	t := int64(b.Threat.At(u.X, u.Z))
@@ -365,9 +539,9 @@ func (e *Economy) retreat(b *core.Board, i int32) bool {
 	th := int64(s.p.ThreatHalf)
 	var danger bool
 	if u.Info.Role.Has(aikit.RoleCommander) {
-		away := aikit.Dist2(u.X, u.Z, b.HomeX, b.HomeZ) > 350*350
+		away := aikit.Dist2(u.X, u.Z, b.HomeX, b.HomeZ) > comAway*comAway
 		hurt := u.HP*100 < u.MaxHP*60
-		danger = t >= th/2 && t > own && (away || hurt)
+		danger = s.comDanger(b, u.X, u.Z) && (away || hurt)
 	} else {
 		danger = t >= th && t > own*2
 	}
@@ -384,6 +558,55 @@ func (e *Economy) retreat(b *core.Board, i int32) bool {
 	d.top[0] = cand{kind: cRetreat, x: b.HomeX, z: b.HomeZ, score: t, f: [4]int64{t, own}}
 	d.n, d.chosen = 1, 0
 	return true
+}
+
+// comAway is how far from home the commander counts as away: beyond it, an
+// enemy threat that outweighs own armed power sends it home.
+const comAway = 350
+
+// comDanger is the commander's retreat test at x, z: an enemy threat of at
+// least half threat_half that outweighs own armed power there.
+func (s *shared) comDanger(b *core.Board, x, z int32) bool {
+	t := int64(b.Threat.At(x, z))
+	return t >= int64(s.p.ThreatHalf)/2 && t > int64(b.OwnPower.At(x, z))
+}
+
+// comLeashSpots is how many land metal spots the commander's leash always
+// reaches. At a start chosen away from the map's metal, the nearest spot
+// can lie beyond com_radius: the commander, the opening's only builder,
+// then built no extractor, and with no spot a builder could work the
+// economy wanted no constructor either.
+const comLeashSpots = 2
+
+// comLeash is the commander's leash from home: com_radius, stretched to the
+// comLeashSpots-th nearest land metal spot.
+func (s *shared) comLeash() int64 { return max64(int64(s.p.ComRadius), s.comReach) }
+
+// spotReach is the distance from x, z to the k-th nearest land metal spot
+// (the farthest one when the map has fewer).
+func spotReach(m *aikit.MapInfo, x, z int32, k int) int64 {
+	var d []int64
+	for i := range m.Spots {
+		if sp := &m.Spots[i]; !sp.Water {
+			d = append(d, aikit.Dist2(sp.X, sp.Z, x, z))
+		}
+	}
+	if len(d) == 0 {
+		return 0
+	}
+	slices.Sort(d)
+	return aikit.ISqrt64(d[min(len(d), k)-1]) + 1
+}
+
+// comOff reports a work site the commander may not take: beyond its leash
+// of home, or away from home where its retreat test already holds (it
+// would walk into the fight it then has to leave).
+func (s *shared) comOff(b *core.Board, x, z int32) bool {
+	d := aikit.Dist2(x, z, b.HomeX, b.HomeZ)
+	if l := s.comLeash(); d > l*l {
+		return true
+	}
+	return d > comAway*comAway && s.comDanger(b, x, z)
 }
 
 func (e *Economy) record(u *aikit.OwnUnit) *decision {
@@ -569,7 +792,7 @@ func (e *Economy) evalMex(b *core.Board, u *aikit.OwnUnit, bs *builderState, d *
 		if int32(i) == bs.blockSpot && bs.blockUntil > s.tick {
 			continue
 		}
-		if com && aikit.Dist2(sp.X, sp.Z, b.HomeX, b.HomeZ) > int64(p.ComRadius)*int64(p.ComRadius) {
+		if com && s.comOff(b, sp.X, sp.Z) {
 			continue
 		}
 		if s.outOfPlan(b, sp.X, sp.Z) {
@@ -643,6 +866,9 @@ func (e *Economy) siteFor(b *core.Board, u *aikit.OwnUnit, p *aikit.UnitInfo, ki
 		return clampWorld(x, b.K.Map.WorldW), clampWorld(z, b.K.Map.WorldH)
 	case cRadar:
 		x, z = (s.frontX+b.RallyX)/2, (s.frontZ+b.RallyZ)/2
+		if e.homeRadar(b, p) {
+			x, z = b.HomeX+(s.frontX-b.HomeX)/4, b.HomeZ+(s.frontZ-b.HomeZ)/4
+		}
 		return clampWorld(x, b.K.Map.WorldW), clampWorld(z, b.K.Map.WorldH)
 	case cMaker, cStorage:
 		x, z = s.sideX, s.sideZ
@@ -753,7 +979,7 @@ func (e *Economy) place(b *core.Board, u *aikit.OwnUnit, c *cand) (travel, thr i
 	p := &s.p
 	c.x, c.z = e.siteFor(b, u, c.prod, c.kind)
 	c.spot = -1
-	if u.Info.Role.Has(aikit.RoleCommander) && aikit.Dist2(c.x, c.z, b.HomeX, b.HomeZ) > int64(p.ComRadius)*int64(p.ComRadius) {
+	if u.Info.Role.Has(aikit.RoleCommander) && s.comOff(b, c.x, c.z) {
 		return 0, 0, false
 	}
 	dist := int64(aikit.Dist(u.X, u.Z, c.x, c.z))
@@ -966,6 +1192,9 @@ func (e *Economy) evalRadar(b *core.Board, u *aikit.OwnUnit, p *aikit.UnitInfo) 
 	if need == 0 || p.Radar <= 0 {
 		return c
 	}
+	if e.homeRadar(b, p) {
+		need = radarHomeNeed
+	}
 	travel, thr, ok := e.place(b, u, &c)
 	if !ok || e.radarCovered(b, &c) {
 		return c
@@ -974,6 +1203,31 @@ func (e *Economy) evalRadar(b *core.Board, u *aikit.OwnUnit, p *aikit.UnitInfo) 
 	c.score = mul(mul(mul(mul(int64(s.p.WRadar)*10, need), aff), travel), thr)
 	c.f = [4]int64{need, aff, travel, thr}
 	return c
+}
+
+// A base with no radar over it sees an army only when the army is inside
+// it: radar is what warns the army to come home (the tactics' approach
+// warning reads radar contacts). From radarHomeFrom, the first radar over
+// home is wanted radarHomeNeed permille instead of the ordinary at most
+// 1000, enough to come before routine energy and extractors but not before
+// a tower the base urgently needs. It waits for minute 10: sooner, it took
+// a low-APM opening's builders from its first extractors.
+const (
+	radarHomeFrom = 10 * 1800
+	radarHomeNeed = 4000
+)
+
+// homeRadar reports whether radar product p is wanted at home: the switch
+// is on, the battle is radarHomeFrom old, and no stationary radar stands,
+// is under way or is assigned within reach of home (radarCovered's test at
+// home).
+func (e *Economy) homeRadar(b *core.Board, p *aikit.UnitInfo) bool {
+	s := e.s
+	if s.p.RadarHome == 0 || s.tick < radarHomeFrom || p.Radar <= 0 {
+		return false
+	}
+	c := cand{kind: cRadar, prod: p, x: b.HomeX, z: b.HomeZ}
+	return !e.radarCovered(b, &c)
 }
 
 // radarCovered reserves the larger authored radius between stationary
@@ -1063,6 +1317,9 @@ func (e *Economy) evalAssist(b *core.Board, u *aikit.OwnUnit, cm *commitment, d 
 	}
 	need := mul(cov, armyF)
 	if need == 0 {
+		return
+	}
+	if !canGuard(u.Info) {
 		return
 	}
 	best := cand{kind: cGuard, spot: -1}

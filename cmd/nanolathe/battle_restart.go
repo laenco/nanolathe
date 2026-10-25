@@ -241,8 +241,10 @@ func (g *gameShell) prepareBattleRestartContent() bool {
 	// g.opts.Root may have been redirected to SAVEGAME storage. Archive
 	// remount uses the original content roots retained by the mounted set.
 	// The config file this run mounted rides along, so a remount keeps the
-	// directory table it applied (docs/DESIGN_MODS_MUTATORS.md §4.3).
-	remount := Options{Root: g.cs.root, Roots: g.cs.roots, Remaster: g.opts.Remaster, ModConfig: g.cs.configPath}
+	// directory table it applied (docs/DESIGN_MODS_MUTATORS.md §4.3). The
+	// generated maps it held from memory ride along too, since the battle
+	// may be on one (docs/DESIGN_MAP_GENERATOR.md §10).
+	remount := Options{Root: g.cs.root, Roots: g.cs.roots, Remaster: g.opts.Remaster, ModConfig: g.cs.configPath, generatedMaps: g.cs.generated}
 	g.cs.remountAddons(&remount)
 	if !g.cs.manualRoots {
 		// Remount the base roots and select the running mod explicitly — none

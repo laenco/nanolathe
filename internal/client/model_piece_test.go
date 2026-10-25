@@ -267,7 +267,8 @@ func TestHiddenPieceAbsent(t *testing.T) {
 		t.Fatalf("hidden turret piece should not be rasterized, color 22 found %d pixels", count22)
 	}
 	_ = count11
-	// Also test child of hidden parent is hidden: make turret child of hidden base? Already turret parent base but base visible; hide base should hide turret too even if turret not hidden.
+	// A hidden parent removes only its own faces. Its visible child still
+	// rasterizes through the parent's transform [03 §2.4.1].
 	view2 := frame.UnitView{
 		Slot: view.Slot, Owner: view.Owner, X: view.X, Y: view.Y, Z: view.Z, Model: view.Model,
 		Pieces: []frame.PieceView{
@@ -289,8 +290,8 @@ func TestHiddenPieceAbsent(t *testing.T) {
 	if count11 != 0 {
 		t.Fatalf("hidden parent base should hide its own tris, found %d", count11)
 	}
-	if count22 != 0 {
-		t.Fatalf("child of hidden parent should also be hidden, found turret %d", count22)
+	if count22 == 0 {
+		t.Fatal("visible turret child of a hidden parent contributed no pixels")
 	}
 }
 

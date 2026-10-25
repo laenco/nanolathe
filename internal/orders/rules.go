@@ -49,6 +49,10 @@ type Rules interface {
 	DefaultBuilderOptions() BuilderOptions
 	// PatrolWorkVisit replaces only automatic work selection at patrol maintenance.
 	PatrolWorkVisit(u *units.Unit, n *Node, tick uint32) (Code, bool)
+	// PatrolWorkWake may select automatic work for a blocked patrol head
+	// between its maintenance visits, without dispatching the leg. True means
+	// the visit head-inserted work and the pump continues with the new head.
+	PatrolWorkWake(u *units.Unit, n *Node, tick uint32) bool
 	// AutomaticWorkValid bounds a borrowed job to its retained assignment.
 	AutomaticWorkValid(u *units.Unit, n *Node) bool
 	// AutomaticWorkResult records Modern patrol work/return outcomes without
@@ -199,6 +203,11 @@ func (StrictRules) AutomaticWorkValid(*units.Unit, *Node) bool              { re
 func (StrictRules) AutomaticWorkResult(_ *units.Unit, _ *Node, _ uint32, code Code, _ uint32) Code {
 	return code
 }
+
+// PatrolWorkWake is retail's answer: a blocked repair patrol stalls until its
+// own deadline or a movement outcome, and work selection runs only inside
+// its maintenance visit [04 R-ORD-01 §4][04 R-ORD-01 §7][04 §3.3].
+func (StrictRules) PatrolWorkWake(*units.Unit, *Node, uint32) bool { return false }
 
 // HoldsFire is retail's answer: the standing-order fields are read by the
 // caller's own gates, a forced join bypasses them, and the standing-fire

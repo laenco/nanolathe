@@ -1,13 +1,113 @@
 package session
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/nanolathe-gg/nanolathe/internal/combat"
+	"github.com/nanolathe-gg/nanolathe/internal/content"
+	"github.com/nanolathe-gg/nanolathe/internal/economy"
 	"github.com/nanolathe-gg/nanolathe/internal/frame"
+	"github.com/nanolathe-gg/nanolathe/internal/gameplay"
+	"github.com/nanolathe-gg/nanolathe/internal/hud"
+	"github.com/nanolathe-gg/nanolathe/internal/mission"
 	"github.com/nanolathe-gg/nanolathe/internal/pool"
+	"github.com/nanolathe-gg/nanolathe/internal/save"
 	"github.com/nanolathe-gg/nanolathe/internal/units"
 )
+
+// Added faction names are content metadata in every gameplay mode. Stock
+// registration keeps its established spelling [08 R-SKIR-01 §2].
+func TestSkirmishPlayerNamesUseAddedSideMetadata(t *testing.T) {
+	for _, mode := range []gameplay.Mode{gameplay.Modern, gameplay.Strict31, gameplay.Community39} {
+		s := &Session{Gameplay: mode, Catalog: strictMinimalCatalog()}
+		s.Catalog.Sides = append(s.Catalog.Sides, &content.SideDef{Name: "TALON"}, &content.SideDef{Name: "Rumad"})
+		for _, tc := range []struct {
+			controller uint8
+			side       int
+			want       string
+		}{{1, 2, "Player"}, {2, 0, "Arm"}, {2, 1, "Core"}, {2, 2, "TALON"}, {2, 3, "Rumad"}, {2, 4, ""}} {
+			if got := s.skirmishPlayerName(tc.controller, tc.side); got != tc.want {
+				t.Fatalf("%s controller %d side %d name = %q, want %q", mode, tc.controller, tc.side, got, tc.want)
+			}
+		}
+		// A total-conversion mod may replace the base ordinal's definition.
+		// Its authored identity must not inherit the stock label.
+		for side, name := range []string{"TALON", "Rumad"} {
+			s.Catalog.Sides[side].Name = name
+			if got := s.skirmishPlayerName(2, side); got != name {
+				t.Fatalf("%s replaced side %d name = %q, want %q", mode, side, got, name)
+			}
+		}
+	}
+}
+
+// Name and rank are absent from the closed retail account. Restoration must
+// register the saved slots before the score panel walks them: duplicate zero
+// ranks hide every player except the first [07 R-HUD-04 §1]. Sparse slots and
+// players with no units still retain distinct rows.
+func TestRestoredPlayerRowsKeepDistinctRanksAndNames(t *testing.T) {
+	s, _ := newRestoreCoreFixture(t, 0)
+	s.Mission = &mission.Mission{Type: mission.TypeSkirmish}
+	s.Catalog = strictMinimalCatalog()
+	s.Catalog.Sides = append(s.Catalog.Sides, &content.SideDef{Name: "TALON"})
+	s.SeedSessionRNG(7, 9)
+	simDraws, crtDraws := s.SimRNG().Draws(), s.CrtRNG().Draws()
+	b := save.NewBuilder()
+	want := []save.PlayerSlot{
+		{Index: 0, Controller: 1, Side: 0, Logo: 2, Kills: 3, Losses: 1, Energy: 123, Metal: 45},
+		{Index: 3, Controller: 2, Side: 2, Logo: 7, Kills: 12, Losses: 8, Energy: 456, Metal: 67},
+		{Index: 9, Controller: 2, Side: 1, Logo: 4, Kills: 6, Losses: 2, Energy: 789, Metal: 89},
+	}
+	for _, p := range want {
+		save.WritePlayerSlot(b, p)
+	}
+	bank, err := save.OpenBytes(b.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := &save.BattleImage{}
+	for _, p := range want {
+		saved, ok := save.ReadPlayerSlot(bank, p.Index)
+		if !ok {
+			t.Fatalf("player %d account missing", p.Index)
+		}
+		image.Players = append(image.Players, saved)
+	}
+	// An explicitly supplied name is presentation state and is preserved.
+	s.Econ.Players[9].Name = "Named computer"
+	if err := RestoreRetailBattleCore(&RetailBattleStage{Session: s, Image: image}); err != nil {
+		t.Fatal(err)
+	}
+	var published frame.Frame
+	publishPlayerRows(s, &published)
+	var slots [frame.PlayerRowSlots]hud.ScoreSlot
+	for i, row := range published.Players {
+		slots[i] = hud.ScoreSlot{Present: row.Present, Controller: row.Controller, Side: row.Side, LiveUnits: row.LiveUnits, Auxiliary: row.Auxiliary, Watcher: row.Watcher, Rank: row.Rank}
+	}
+	order, _ := hud.ScoreRowOrder(slots[:], len(want))
+	if !reflect.DeepEqual(order, []int{0, 3, 9}) {
+		t.Fatalf("restored score rows = %v, want all saved slots in registration order", order)
+	}
+	for i, name := range []string{"Player", "TALON", "Named computer"} {
+		slot := want[i].Index
+		if got := published.Players[slot].Name; got != name {
+			t.Errorf("slot %d name = %q, want %q", slot, got, name)
+		}
+	}
+	for _, p := range want {
+		row := published.Players[p.Index]
+		if row.Rank != uint8(p.Index) || row.Logo != p.Logo || row.Side != p.Side || row.Controller != p.Controller || row.Kills != int(p.Kills) || row.Losses != int(p.Losses) {
+			t.Errorf("slot %d changed saved row fields: %+v", p.Index, row)
+		}
+		if got := s.Econ.Players[p.Index].Stock; got[economy.Energy] != p.Energy || got[economy.Metal] != p.Metal {
+			t.Errorf("slot %d changed saved stocks: %v", p.Index, got)
+		}
+	}
+	if s.SimRNG().Draws() != simDraws || s.CrtRNG().Draws() != crtDraws {
+		t.Fatal("player restoration or publication drew from an RNG")
+	}
+}
 
 // publishedPlayerRows publishes one snapshot and returns the committed rows.
 func publishedPlayerRows(t *testing.T, s *Session, tick uint32) [frame.PlayerRowSlots]frame.PlayerRow {

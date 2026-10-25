@@ -40,9 +40,11 @@ func TestRadarCoverage(t *testing.T) {
 			u.Built = !tc.frame
 			w.think(6*1800, append(w.base(), u))
 			// Hold the request point fixed to exercise the coverage decision
-			// independently of which building the front follows.
+			// independently of which building the front follows, with home
+			// there too so the radar wanted over home asks for the same point.
 			w.b.RallyX, w.b.RallyZ = 2000, 2000
 			w.e.s.frontX, w.e.s.frontZ = 2000, 2000
+			w.b.HomeX, w.b.HomeZ = 2000, 2000
 			randBefore := *w.k.Rand
 			metalBefore, energyBefore := w.obs.Metal, w.obs.Energy
 			c := w.e.evalRadar(w.b, &w.obs.Own[1], w.d.rad)
@@ -120,5 +122,48 @@ func TestRadarRebuildAfterLoss(t *testing.T) {
 	w.think(6*1800+30, w.base())
 	if next := w.e.evalRadar(w.b, &w.obs.Own[1], w.d.rad); next.score < minScore {
 		t.Fatalf("lost radar cannot be rebuilt: score %d", next.score)
+	}
+}
+
+// A base with no radar over it wants one at home from minute 10, ahead of
+// routine building; once one covers home, a further radar is the ordinary
+// forward one. radar_home=0 keeps the forward radar and its ordinary need.
+func TestRadarOverHome(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		on     bool
+		tick   uint32
+		cover  bool
+		atHome bool
+		urgent bool
+	}{
+		{name: "uncovered home", on: true, tick: 12 * 1800, atHome: true, urgent: true},
+		{name: "before minute 10", on: true, tick: 8 * 1800},
+		{name: "home covered", on: true, tick: 12 * 1800, cover: true},
+		{name: "switch off", tick: 12 * 1800},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := DefaultParams()
+			if !tc.on {
+				p.RadarHome = 0
+			}
+			w := newDefWorld(p)
+			w.d.rad.Radar = 1200
+			units := w.base()
+			if tc.cover {
+				units = append(units, own(9, w.d.rad, w.b.HomeX+300, w.b.HomeZ))
+			}
+			w.think(tc.tick, units)
+			w.b.RallyX, w.b.RallyZ = w.b.HomeX+2400, w.b.HomeZ
+			w.e.s.frontX, w.e.s.frontZ = w.b.HomeX+1600, w.b.HomeZ
+			c := w.e.evalRadar(w.b, &w.obs.Own[1], w.d.rad)
+			home := aikit.Dist2(c.x, c.z, w.b.HomeX, w.b.HomeZ) <= 500*500
+			if c.score > 0 && home != tc.atHome {
+				t.Errorf("radar at (%d,%d), home (%d,%d): at home = %v, want %v", c.x, c.z, w.b.HomeX, w.b.HomeZ, home, tc.atHome)
+			}
+			if urgent := c.f[0] == radarHomeNeed; urgent != tc.urgent {
+				t.Errorf("need %d: urgent = %v, want %v", c.f[0], urgent, tc.urgent)
+			}
+		})
 	}
 }

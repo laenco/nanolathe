@@ -20,6 +20,7 @@ import (
 
 type survivalBestRun struct {
 	key      string
+	content  [32]byte
 	best     settings.SurvivalBest
 	exists   bool
 	improved bool
@@ -65,6 +66,7 @@ func newSurvivalBestRun(request headless.FreshBattleRequest, cs *contentSet, s *
 		run.excluded = "content identity unavailable"
 		return run
 	}
+	run.content = digest
 	// Reuse the local setup adapter, without online admission's seat limits:
 	// Strict single-player Survival permits two buddies. The frozen content
 	// digest already includes the applied restrictions and selected map schema,

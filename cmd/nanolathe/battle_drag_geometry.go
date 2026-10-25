@@ -200,3 +200,161 @@ func dragAssignDestinations(actors, destinations []dragPoint) []dragPoint {
 	}
 	return assigned
 }
+
+// dragNearestChain is the order one worker visits an area's targets in
+// (DESIGN_INTERFACE_HUD_INPUT §3.11, Nanolathe input policy): from start it
+// takes the nearest remaining point, then the point nearest that one, and so
+// on. Distances are exact squared whole-unit distances, with ties to the lower
+// index, so the walk is the same as a full scan at every step. It returns
+// indices into points. A uniform grid keeps a large forest drag well below
+// quadratic work.
+func dragNearestChain(start dragPoint, points []dragPoint) []int {
+	n := len(points)
+	order := make([]int, 0, n)
+	if n == 0 {
+		return order
+	}
+	minX, minZ, maxX, maxZ := points[0].x, points[0].z, points[0].x, points[0].z
+	for _, p := range points[1:] {
+		minX, maxX = min(minX, p.x), max(maxX, p.x)
+		minZ, maxZ = min(minZ, p.z), max(maxZ, p.z)
+	}
+	// Cells of at least 64 world units, widened so a side has at most 256.
+	span := max(int64(maxX)-int64(minX), int64(maxZ)-int64(minZ)) + 1
+	cell := max(int64(64), (span+255)/256)
+	cols := int((int64(maxX)-int64(minX))/cell) + 1
+	rows := int((int64(maxZ)-int64(minZ))/cell) + 1
+	cellOf := func(p dragPoint) (int, int) {
+		return int((int64(p.x) - int64(minX)) / cell), int((int64(p.z) - int64(minZ)) / cell)
+	}
+	buckets := make([][]int32, cols*rows)
+	where := make([]int32, n) // each point's position inside its bucket
+	for i, p := range points {
+		cx, cz := cellOf(p)
+		b := cz*cols + cx
+		where[i] = int32(len(buckets[b]))
+		buckets[b] = append(buckets[b], int32(i))
+	}
+	remove := func(i int) {
+		cx, cz := cellOf(points[i])
+		b := cz*cols + cx
+		list := buckets[b]
+		last := list[len(list)-1]
+		list[where[i]], where[last] = last, where[i]
+		buckets[b] = list[:len(list)-1]
+	}
+	dist := func(a, b dragPoint) int64 {
+		dx, dz := int64(a.x)-int64(b.x), int64(a.z)-int64(b.z)
+		return dx*dx + dz*dz
+	}
+	best, bestD := -1, int64(0)
+	consider := func(from dragPoint, i int) {
+		if d := dist(from, points[i]); best < 0 || d < bestD || (d == bestD && i < best) {
+			best, bestD = i, d
+		}
+	}
+	// The worker may stand far outside the area, so its first pick scans all.
+	for i := range points {
+		consider(start, i)
+	}
+	for {
+		order = append(order, best)
+		remove(best)
+		if len(order) == n {
+			return order
+		}
+		from := points[best]
+		cx, cz := cellOf(from)
+		reach := max(cx, cols-1-cx, cz, rows-1-cz)
+		best = -1
+		for r := 0; r <= reach; r++ {
+			// A point in ring r lies more than (r−1)·cell away on one axis, so
+			// once the best is that close no farther ring can beat or tie it.
+			if bound := int64(r-1) * cell; r > 0 && best >= 0 && bestD <= bound*bound {
+				break
+			}
+			for z := cz - r; z <= cz+r; z++ {
+				if z < 0 || z >= rows {
+					continue
+				}
+				step := 2 * r // interior rows visit only the ring's two ends
+				if z == cz-r || z == cz+r || r == 0 {
+					step = 1
+				}
+				for x := cx - r; x <= cx+r; x += step {
+					if x < 0 || x >= cols {
+						continue
+					}
+					for _, i := range buckets[z*cols+x] {
+						consider(from, int(i))
+					}
+				}
+			}
+		}
+	}
+}
+
+// An area gesture's fan-out budget (DESIGN_INTERFACE_HUD_INPUT §3.11). A
+// single-player gesture sends at most 16 commands and, unless its list alone
+// is longer, at most 4,096 entries in all (about 144 KiB at 36 bytes an
+// entry), which keeps replays bounded. Online the relay holds every seat's
+// commands awaiting a tick together and closes the room past 64 commands or
+// 256 KiB (DESIGN_MULTIPLAYER §16.5.1); no per-gesture budget can account for
+// the other seats, so an online gesture sends one command, exactly the size it
+// always was. These are UI budgets, not retail constants.
+const (
+	dragAreaCommandLimit = 16
+	dragAreaEntryBudget  = 4096
+)
+
+// dragAreaGroups splits workers into at most limit groups (at least one) so
+// that one copy of an entries-long list per group fits the entry budget. With
+// room for everyone each worker is its own group, starting from its own
+// position. Otherwise the workers are sorted along the axis on which they
+// spread wider (then the other axis, then index) and cut into that many
+// contiguous runs of near-equal size; a run starts from its middle worker.
+// Groups list worker indices in ascending order.
+func dragAreaGroups(workers []dragPoint, entries, limit int) (groups [][]int, starts []dragPoint) {
+	n := len(workers)
+	if n == 0 {
+		return nil, nil
+	}
+	count := min(n, max(1, limit), max(1, dragAreaEntryBudget/max(entries, 1)))
+	if count == n {
+		for i, p := range workers {
+			groups, starts = append(groups, []int{i}), append(starts, p)
+		}
+		return groups, starts
+	}
+	minX, maxX, minZ, maxZ := workers[0].x, workers[0].x, workers[0].z, workers[0].z
+	for _, p := range workers[1:] {
+		minX, maxX = min(minX, p.x), max(maxX, p.x)
+		minZ, maxZ = min(minZ, p.z), max(maxZ, p.z)
+	}
+	alongX := int64(maxX)-int64(minX) >= int64(maxZ)-int64(minZ)
+	order := make([]int, n)
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortFunc(order, func(a, b int) int {
+		pa, pb := workers[a], workers[b]
+		if !alongX {
+			pa, pb = dragPoint{pa.z, pa.x}, dragPoint{pb.z, pb.x}
+		}
+		if c := cmp.Compare(pa.x, pb.x); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(pa.z, pb.z); c != 0 {
+			return c
+		}
+		return cmp.Compare(a, b)
+	})
+	for g := range count {
+		run := order[g*n/count : (g+1)*n/count]
+		starts = append(starts, workers[run[len(run)/2]])
+		members := slices.Clone(run)
+		slices.Sort(members)
+		groups = append(groups, members)
+	}
+	return groups, starts
+}

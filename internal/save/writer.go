@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"math"
+	"sync"
 )
 
 // retailPool is the writer's own string pool, so that the encounter order of
@@ -185,7 +186,11 @@ func encodeRetailSQSH(raw []byte) []byte {
 // window for each two-byte prefix and accepts the first longest match in
 // newest-to-oldest order; match lengths are bounded at the format's 17 bytes.
 func encodeRetailLZ(src []byte) []byte {
-	positions := make(map[uint16]retailHistory)
+	positions := retailHistoryPool.Get().(*retailHistories)
+	defer func() {
+		positions.reset()
+		retailHistoryPool.Put(positions)
+	}()
 	var payload bytes.Buffer
 	for pos := 0; pos < len(src); {
 		var tag byte
@@ -240,12 +245,35 @@ type retailHistory struct {
 	head      int
 }
 
-func retailRemember(positions map[uint16]retailHistory, src []byte, pos int) {
+// retailHistories holds one position history per two-byte key, reused
+// across encodes. A map lookup and store per input byte were most of the
+// encoder's cost, and a large battle's bank is many 64 KiB chunks. An array
+// indexed by the key finds the same positions, so the encoded bytes are
+// unchanged; only the keys an encode touched are cleared before the next one.
+type retailHistories struct {
+	keys    [1 << 16]retailHistory
+	touched []uint16
+}
+
+var retailHistoryPool = sync.Pool{New: func() any { return new(retailHistories) }}
+
+func (h *retailHistories) reset() {
+	for _, key := range h.touched {
+		h.keys[key].positions = h.keys[key].positions[:0]
+		h.keys[key].head = 0
+	}
+	h.touched = h.touched[:0]
+}
+
+func retailRemember(positions *retailHistories, src []byte, pos int) {
 	if pos+1 >= len(src) {
 		return
 	}
 	key := uint16(src[pos])<<8 | uint16(src[pos+1])
-	history := positions[key]
+	history := &positions.keys[key]
+	if len(history.positions) == 0 {
+		positions.touched = append(positions.touched, key)
+	}
 	if len(history.positions) > 0 && len(history.positions) == cap(history.positions) && history.head >= len(history.positions)/2 {
 		copy(history.positions, history.positions[history.head:])
 		history.positions = history.positions[:len(history.positions)-history.head]
@@ -256,17 +284,18 @@ func retailRemember(positions map[uint16]retailHistory, src []byte, pos int) {
 	for history.head < len(history.positions) && history.positions[history.head] < cutoff {
 		history.head++
 	}
-	positions[key] = history
 }
 
-func retailMatch(src []byte, pos int, positions map[uint16]retailHistory) (int, int) {
+func retailMatch(src []byte, pos int, positions *retailHistories) (int, int) {
 	if pos+1 >= len(src) {
 		return 0, 0
 	}
 	key := uint16(src[pos])<<8 | uint16(src[pos+1])
-	history := positions[key]
+	history := &positions.keys[key]
 	list := history.positions
 	bestPos, bestLen := 0, 0
+	// The longest a match here can be: 17, or what is left of the input.
+	longest := min(17, len(src)-pos)
 	for i := len(list) - 1; i >= history.head; i-- {
 		candidate := list[i]
 		distance := pos - candidate
@@ -276,6 +305,18 @@ func retailMatch(src []byte, pos int, positions map[uint16]retailHistory) (int, 
 		windowPos := (1 + candidate) & 0xfff
 		if windowPos == 0 {
 			continue
+		}
+		// A candidate that differs at the best length so far cannot be
+		// longer, and only a longer one replaces it: skip it without
+		// comparing the rest. The chosen match is unchanged.
+		if bestLen > 0 {
+			reference := candidate + bestLen
+			if reference >= pos {
+				reference = pos + (reference-pos)%distance
+			}
+			if src[pos+bestLen] != src[reference] {
+				continue
+			}
 		}
 		length := 0
 		for length < 17 && pos+length < len(src) {
@@ -290,7 +331,7 @@ func retailMatch(src []byte, pos int, positions map[uint16]retailHistory) (int, 
 		}
 		if length > bestLen {
 			bestPos, bestLen = candidate, length
-			if bestLen == 17 {
+			if bestLen == longest {
 				break
 			}
 		}

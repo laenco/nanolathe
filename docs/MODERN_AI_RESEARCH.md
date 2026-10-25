@@ -184,11 +184,18 @@ Build once: `go build -o /tmp/ai-arena-<you> ./cmd/ai-arena`.
 
 ```
 ai-arena match -map "great divide" -seed 1 -ticks 36000 -p mybrain:hard -p retail -out r.json \
-    [-starts slot|random|swap] [-score default|invested] [-raw-seed] [-trace t.json] [-allocs]
+    [-starts slot|random|swap] [-score default|invested] [-raw-seed] [-trace t.json] [-allocs] [-mod <id>]
 ai-arena tournament -spec spec.json -out DIR -jobs 3
 tools/ai-arena-summary DIR [DIR ...] [--by-map] [--score recorded|default|invested] [--json OUT]
 tools/ai-arena-analyze analysis.json DIR [DIR ...] [--anchor retail]
 ```
+
+**Content.** A match plays the base game unless `-mod <id>[@<version>]`
+mounts an installed mod as the last root with its own config's content
+section, as `nanolathe-headless --mod` does; a tournament passes it in
+`extra`. The match keeps the arena's rule set, so the config's Community
+table does not apply, and the result records the config's id as `content`.
+The protocol evidence below is base-game evidence.
 
 **Host.** Run tournaments niced (`nice -n 15`) with at most three match
 processes; `-jobs` defaults to 3. The host is shared with other work, and

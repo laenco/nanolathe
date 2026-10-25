@@ -107,7 +107,7 @@ func (e *Economy) planCandCls(pl *defPlan, b *core.Board, u *aikit.OwnUnit, p *a
 		return c
 	}
 	x, z := pl.x[cl], pl.z[cl]
-	if u.Info.Role.Has(aikit.RoleCommander) && aikit.Dist2(x, z, b.HomeX, b.HomeZ) > int64(sp.ComRadius)*int64(sp.ComRadius) {
+	if u.Info.Role.Has(aikit.RoleCommander) && s.comOff(b, x, z) {
 		if tp != nil {
 			tp.com = true
 		}

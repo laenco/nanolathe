@@ -242,6 +242,13 @@ func (s *EffectService) admit(now uint32, e Event) bool {
 			s.nextID = ^uint32(0)
 		}
 	}
+	// A producer that admits here directly, such as a COB explosion or a
+	// debris impact, is routed exactly as the event buffer routes one. Left
+	// unset, its strip would read as barrier 0, which no retail producer
+	// writes and which the composer draws beneath the features and both unit
+	// passes; unrouted producers belong to the fixed pool [03 §1]
+	// [03 R-STRIP-01 §3].
+	frame.RouteEvent(&e)
 	view := frame.EffectView{
 		ID: id, EventSeq: e.Sequence, Source: e.Source, Target: e.Target,
 		EffectID: e.EffectID, Piece: e.Piece, SFXType: e.SFXType,

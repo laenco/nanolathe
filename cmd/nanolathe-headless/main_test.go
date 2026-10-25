@@ -183,6 +183,8 @@ func TestParseMutators(t *testing.T) {
 		{[]string{"--mutator", "buildSpeed=1.5", "--mutator=buildCost=4"}, "buildCost=4,buildSpeed=1.5"},
 		{[]string{"--mutator", "buildCost=1"}, ""},
 		{[]string{"--mutator", "radar=0.5", "--mutator", "health=2", "--mutator", "damage=0.75", "--mutator", "sight=3"}, "damage=0.75,health=2,radar=0.5,sight=3"},
+		{[]string{"--mutator", "builderSpeed=5", "--mutator", "buildSpeed=2"}, "buildSpeed=2,builderSpeed=5"},
+		{[]string{"--mutator", "builderSpeed=20"}, "builderSpeed=20"},
 	} {
 		req, _, _, _, err := parse(tc.args, io.Discard)
 		if err != nil {
@@ -195,6 +197,8 @@ func TestParseMutators(t *testing.T) {
 	for _, args := range [][]string{
 		{"--mutator", "buildspeed=2"},
 		{"--mutator", "buildSpeed=5"},
+		{"--mutator", "builderSpeed=4"},
+		{"--mutator", "builderSpeed=0.5"},
 		{"--mutator", "buildSpeed"},
 		{"--mutator", "buildSpeed=2", "--mutator", "buildSpeed=3"},
 		{"--mutator", "buildSpeed=2", "--sim-benchmark", "/tmp/unused-benchmark"},

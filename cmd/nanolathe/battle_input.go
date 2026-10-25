@@ -651,6 +651,7 @@ func (b *battleSession) handleBattleShortcuts(in *input.State, cl *client.Client
 	if ctrlHeld {
 		b.dispatchCtrlLetters(kbd)
 	}
+	b.handleQuickSaveKeys(kbd, ctrlHeld) // Ctrl+F11 quick save, Ctrl+F12 quick load (autosave.go)
 	// Camera bookmarks: Ctrl+F5..F8 store the current origin into slot 0..3 and
 	// F5..F8 recall it, both with the `SelectSquad` cue [07 R-CAM-01 §2]
 	// [07 R-CAM-01 §12].

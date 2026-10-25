@@ -69,6 +69,14 @@ func newModernWorkFixture(air bool) *modernWorkFixture {
 				}
 			}
 		},
+		LookupFeature: func(cx, cz int32) (FeatureView, bool) {
+			for _, feature := range f.features {
+				if feature.CX == cx && feature.CZ == cz {
+					return feature, true
+				}
+			}
+			return FeatureView{}, false
+		},
 	})
 	q.binding.Work.SetAssist(func(*units.Unit, *Node, uint32) bool { f.workCalls++; return false })
 	q.binding.Work.SetRepair(func(*units.Unit, *units.Unit, *Node, uint32) bool { f.workCalls++; return false })
@@ -142,7 +150,10 @@ func TestModernBuilderDefaultsAndIndependentPreferences(t *testing.T) {
 	}
 }
 
-func TestModernPatrolPrioritizesFactoryNanoframeBeforeRepairAndReclaim(t *testing.T) {
+// A factory's carried product is ordinary construction under the Modern
+// score (DESIGN_UNITS_ORDERS_COB "Smarter patrol — 2026-10-22"): its factory
+// counts as one builder already on it, and the job records the factory.
+func TestModernPatrolSelectsFactoryProductAndKeepsRoute(t *testing.T) {
 	for _, air := range []bool{false, true} {
 		t.Run(fmt.Sprint(air), func(t *testing.T) {
 			f := newModernWorkFixture(air)
@@ -151,14 +162,16 @@ func TestModernPatrolPrioritizesFactoryNanoframeBeforeRepairAndReclaim(t *testin
 			factory.Def.Builder = true
 			product := modernPatient(7, 400, 0, true)
 			product.Def.CanFly = air
-			closer := modernPatient(5, 1, 0, false)
-			laterTie := modernPatient(9, 400, 0, true)
-			f.units = []*units.Unit{closer, laterTie, factory, product}
+			product.Attachment.Carrier = factory.Handle
+			// Detour 400 behind the builder, and 370 plus the reclaim offset off
+			// the route, against the product's 0 plus one helper's 256.
+			behind := modernPatient(5, -200, 0, false)
+			f.units = []*units.Unit{behind, factory, product}
 			wq := QueueForUnit(factory)
 			wq.Push(rowBuildingBuild, Node{Owner: factory.Handle, Target: product.Handle})
 			production := wq.Head()
 			production.BindTarget(product.Handle)
-			f.features = []FeatureView{modernFeature(2, 0, 0, 10, 0)}
+			f.features = []FeatureView{modernFeature(2, 0, 300, 10, 0)}
 			f.resources.Stock[0] = 0
 			random, resources := f.sim, f.resources
 			if code := f.visit(100); code != 2 {
@@ -169,7 +182,7 @@ func TestModernPatrolPrioritizesFactoryNanoframeBeforeRepairAndReclaim(t *testin
 			if air {
 				wantID = rowVTOLHelpBuild
 			}
-			if head.ID != wantID || head.Target != product.Handle || head.workAssignment != f.patrol || len(f.q.primary) != 5 || !f.q.primary[1].IsPatrolReturn() || f.q.primary[2] != f.patrol || f.q.primary[3] != f.next || f.q.primary[4] != f.successor {
+			if head.ID != wantID || head.Target != product.Handle || head.workAssignment != f.patrol || head.workFactory != factory || len(f.q.primary) != 5 || !f.q.primary[1].IsPatrolReturn() || f.q.primary[2] != f.patrol || f.q.primary[3] != f.next || f.q.primary[4] != f.successor {
 				t.Fatal("factory frame was not selected with original route and successors retained")
 			}
 			if f.workCalls != 0 || f.sim != random || f.resources != resources || product.Remaining != 1 || product.Health != 50 {
@@ -248,13 +261,20 @@ func TestModernPatrolChoicesAndResourceCapacity(t *testing.T) {
 			if got := f.q.Head().Target != 0; got != (choice != PatrolReclaimOnly) {
 				t.Fatalf("air%v choice%d assist=%v", air, choice, got)
 			}
-			// Ordinary assistance energy admission still precedes either build or repair.
+			// Low energy refuses repair alone; construction assistance needs
+			// none (DESIGN_UNITS_ORDERS_COB "Smarter patrol — 2026-10-22", P7).
 			f.q.primary = []*Node{f.patrol, f.next, f.successor}
 			f.features = nil
 			f.resources.Stock[1] = 19
 			f.visit(101)
+			if got := f.q.Head() != f.patrol; got != (choice != PatrolReclaimOnly) {
+				t.Fatalf("low energy construction assist=%v", got)
+			}
+			f.q.primary = []*Node{f.patrol, f.next, f.successor}
+			f.units = []*units.Unit{modernPatient(2, 32, 0, false)}
+			f.visit(102)
 			if f.q.Head() != f.patrol {
-				t.Fatal("low energy admitted assistance")
+				t.Fatal("low energy admitted repair")
 			}
 		}
 	}
@@ -268,9 +288,11 @@ func TestModernPatrolFeatureIdentityAndAuthoredPredicates(t *testing.T) {
 	manualOnly := unreclaimable
 	manualOnly.Reclaimable, manualOnly.Autoreclaimable = true, false
 	zeroYield := modernFeature(2, 0, 0, 0, 0)
-	f.features = []FeatureView{unreclaimable, manualOnly, zeroYield, modernFeature(9, 16, 0, 10, 0), modernFeature(3, -16, 0, 10, 0)}
+	// The two admitted features tie on score and distance either side of the
+	// route; the stable anchor order breaks the tie.
+	f.features = []FeatureView{unreclaimable, manualOnly, zeroYield, modernFeature(9, 0, 16, 10, 0), modernFeature(3, 0, -16, 10, 0)}
 	f.visit(100)
-	if f.q.Head().GoalX != numeric.Fixed(-16<<16) {
+	if f.q.Head().GoalZ != numeric.Fixed(-16<<16) {
 		t.Fatal("feature identity tie or authored admission changed")
 	}
 }
@@ -278,7 +300,7 @@ func TestModernPatrolFeatureIdentityAndAuthoredPredicates(t *testing.T) {
 func TestModernPatrolRetainsWorkingPrecisionEnergyAdmission(t *testing.T) {
 	for _, air := range []bool{false, true} {
 		f := newModernWorkFixture(air)
-		f.units = []*units.Unit{modernPatient(2, 32, 0, true)}
+		f.units = []*units.Unit{modernPatient(2, 32, 0, false)} // repair alone keeps the energy gate
 		f.resources.Stock[1], f.resources.Capacity[1] = 40.6, 203
 		before := f.sim
 		f.visit(100)

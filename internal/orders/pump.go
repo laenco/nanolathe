@@ -207,11 +207,16 @@ type Node struct {
 	// The retail save schema has no producer receipt; see DESIGN_UNITS_ORDERS_COB
 	// "Modern patrol work". The retained queue records own route geometry.
 	workAssignment *Node
-	// Modern patrol borrowing keeps an ordinary saved-position return row.
+	// Modern patrol borrowing keeps an ordinary saved-position return row: its
+	// goal is the job's acquisition anchor, and every job end removes it.
 	// Both links are transient receipts absent from the retail save schema.
-	workReturn          *Node
-	patrolReturn        bool
-	patrolReturnArrived bool
+	workReturn   *Node
+	patrolReturn bool
+	// workFactory is the factory whose carried product a Modern patrol job
+	// was selected to assist, so a successful assist can remember it after
+	// the completion detach (DESIGN_UNITS_ORDERS_COB "Smarter patrol —
+	// 2026-10-22"). Like the other receipts it is absent from retail saves.
+	workFactory *units.Unit
 	// Only autoEngage marks an attack; restored or direct attacks stay explicit.
 	automaticAttack         bool
 	nextAutomaticTargetTick uint32
@@ -223,9 +228,11 @@ type Queue struct {
 	secondary      []*Node
 	danger         dangerState
 	firingPosition firingPositionState
-	// Modern failed-job recovery pauses the entire retained patrol through
-	// rotation until a genuine waypoint arrival or a replacement command.
-	patrolWorkPaused bool
+	// patrolWork is the Modern patrol's failed-target memory and selection
+	// cadence (DESIGN_UNITS_ORDERS_COB "Smarter patrol — 2026-10-22"). It is
+	// forgotten at a genuine waypoint arrival and reset by a replacement
+	// command; Strict 3.1 and Community never write it.
+	patrolWork patrolWorkState
 
 	// detachedNode is the record currently running removal cleanup after it has
 	// already been unlinked, together with whether its retained next link was
@@ -960,6 +967,14 @@ func (q *Queue) pumpPrimary(u *units.Unit, tick uint32) {
 		// satisfied intersection.
 		satisfied := (n.Satisfied | u.Pending) & n.DynamicGate // [04 §3.3] C6
 		if n.DynamicGate != 0 && satisfied == 0 {
+			// A Modern repair patrol may select work between its maintenance
+			// visits without dispatching its blocked leg; a selection
+			// head-inserts the job, which the walk then reloads. Strict 3.1 and
+			// Community decline and consume nothing. Nanolathe Modern policy:
+			// DESIGN_UNITS_ORDERS_COB "Smarter patrol — 2026-10-22".
+			if q.Binding().rules().PatrolWorkWake(u, n, tick) {
+				continue
+			}
 			return // blocked head stalls [04 §3.3] C6
 		}
 		n.Satisfied &^= satisfied

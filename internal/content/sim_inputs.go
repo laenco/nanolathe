@@ -53,6 +53,9 @@ type SimulationInputRequest struct {
 	// identity used by catalog preparation, not a request to apply it again.
 	// Empty strings retain legacy freeze support, but cannot admit a match.
 	PreparingRuleName, PreparingRuleBase string
+	// ModernAI is set when a Modern computer player plays: its candidates
+	// read each builder's InstalledProducts, which then join the AI family.
+	ModernAI bool
 }
 
 // SimulationInputs is one battle's frozen simulation content. Its accessors
@@ -242,7 +245,7 @@ func (i *SimulationInputs) Restrictions() Restrictions {
 func canonicalMutators(m Mutators) Mutators {
 	for _, f := range []*Factor{
 		&m.BuildSpeed, &m.BuildCost, &m.Health, &m.Damage, &m.AreaOfEffect, &m.Sight,
-		&m.Radar, &m.Income, &m.Salvage, &m.FireRate, &m.UnitSpeed,
+		&m.Radar, &m.Income, &m.Salvage, &m.FireRate, &m.UnitSpeed, &m.BuilderSpeed,
 	} {
 		if f.IsIdentity() {
 			*f = Factor{}
@@ -283,7 +286,7 @@ func FreezeSimulationInputs(sources *SimulationSources, r SimulationInputRequest
 	if r.Catalog == nil {
 		return nil, fmt.Errorf("nanolathe: simulation input freeze failed: logical path <catalog>, providers searched [none], expected a catalog compiled from the capture")
 	}
-	vector, ok := mutatorVector(r.Mutators)
+	vector, builderStep, ok := mutatorVector(r.Mutators)
 	if !ok {
 		return nil, fmt.Errorf("nanolathe: simulation input freeze failed: logical path <mutators>, providers searched [none], expected factors on the mutator step list, got %q", r.Mutators.String())
 	}
@@ -311,11 +314,20 @@ func FreezeSimulationInputs(sources *SimulationSources, r SimulationInputRequest
 	f.entries = append(f.entries, simArtEntries(art)...)
 	f.freezeMap(sources.mapName, r)
 	f.freezeAI(r.AIProfile)
+	if r.ModernAI {
+		f.entries = append(f.entries, installedProductsEntry(r.Catalog))
+	}
 	community := newSemanticDigest("nanolathe/sim-content/community/1")
 	community.digest(r.CommunityDigest)
 	mutators := newSemanticDigest("nanolathe/sim-content/mutators/1")
 	for _, step := range vector {
 		mutators.u8(step)
+	}
+	if builderStep != 0 {
+		// Builder speed's own index follows the eleven fixed bytes only when
+		// set, so the field order stays unambiguous and every earlier digest
+		// holds (docs/DESIGN_MODS_MUTATORS.md "Builder speed").
+		mutators.u8(builderStep)
 	}
 	f.entries = append(f.entries,
 		SimulationInput{Family: SimulationFamilyExtension, Presence: SimulationInputPresent, Key: "community", SemanticDigest: community.sum()},
@@ -672,6 +684,24 @@ func (f *freezer) freezeAI(name string) {
 	}
 	f.entries = append(f.entries, entry)
 	f.addProvenance(SimulationFamilyAI, entry.Key, 0, used)
+}
+
+// installedProductsEntry is the AI-family entry of the products the
+// builders' authored pages install, which only the Modern AI reads
+// (BuildMenuPage.InstalledProducts). It is an entry of its own, present only
+// when a Modern computer plays, so a battle without one keeps the identity it
+// had before the Modern AI read them.
+func installedProductsEntry(c *Catalog) SimulationInput {
+	d := newSemanticDigest("nanolathe/sim-content/ai/installed-products/1")
+	for _, key := range sortedKeys(c.BuildMenus) {
+		p := c.BuildMenus[key]
+		if p == nil || len(p.InstalledProducts) == 0 {
+			continue
+		}
+		d.text(key)
+		d.texts(p.InstalledProducts)
+	}
+	return SimulationInput{Family: SimulationFamilyAI, Key: "modern/installed-products", Presence: SimulationInputPresent, SemanticDigest: d.sum()}
 }
 
 // validateSimulationInputs enforces the manifest's representation limits

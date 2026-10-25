@@ -7,6 +7,9 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"io"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -107,11 +110,28 @@ func numericFixture(t *testing.T, root, source string) typedPackage {
 		t.Fatal(err)
 	}
 	info := &types.Info{Defs: map[*ast.Ident]types.Object{}, Uses: map[*ast.Ident]types.Object{}, Types: map[ast.Expr]types.TypeAndValue{}}
-	_, err = (&types.Config{Importer: importer.Default()}).Check("fixture", fset, []*ast.File{file}, info)
+	_, err = (&types.Config{Importer: importer.ForCompiler(fset, "gc", goListExport)}).Check("fixture", fset, []*ast.File{file}, info)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return typedPackage{importPath: "fixture", fset: fset, files: []*ast.File{file}, info: info}
+}
+
+// goListExport opens an imported package's export data where the go command
+// reports it, as loadTypedPackages does. importer.Default finds the standard
+// library through the test binary's GOROOT, which -trimpath (tools/go-budget)
+// leaves empty unless the go command exported one while switching
+// toolchains, so a host whose installed Go is the module's own failed here.
+func goListExport(path string) (io.ReadCloser, error) {
+	out, err := exec.Command("go", "list", "-export", "-f", "{{.Export}}", path).Output()
+	if err != nil {
+		return nil, fmt.Errorf("go list -export %s: %w", path, err)
+	}
+	export := strings.TrimSpace(string(out))
+	if export == "" {
+		return nil, fmt.Errorf("no export data for %s", path)
+	}
+	return os.Open(export)
 }
 
 func TestNumericPortabilityDetectsNamedAndAliasConversions(t *testing.T) {

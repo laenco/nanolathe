@@ -12,7 +12,7 @@ import (
 // StrategicIconRevision versions our Enhanced presentation vocabulary. These
 // mappings describe authored inputs, not recovered retail icon behavior
 // (DESIGN_GPU_RENDERER §18). They never alter a content definition or its hash.
-const StrategicIconRevision = 6
+const StrategicIconRevision = 7
 
 // StrategicIconDescriptor is immutable after catalog construction. Evidence and
 // Unresolved are audit metadata, never additional enemy hover information.
@@ -274,9 +274,23 @@ func classifyStrategicIcon(cat *content.Catalog, u *content.UnitDef) StrategicIc
 	}
 	active := primaryWeapon != ""
 	menu := cat.BuildMenus[content.CanonicalKey(u.CanonicalKey)]
+	// A product counts when it resolves to a unit that occupies ground. One
+	// with no footprint is an in-place upgrade, not a unit the builder sends
+	// out: Escalation's towers, reactors and repair pads list only their own
+	// upgrade. A menu holding nothing else says nothing about the unit's
+	// purpose, so its role comes from the rest of the unit (§18.3).
 	products := 0
 	if menu != nil {
-		products = len(menu.Buttons)
+		for _, button := range menu.Buttons {
+			if p, ok := cat.Unit(button); ok && p.FootprintX > 0 && p.FootprintZ > 0 {
+				products++
+			}
+		}
+	}
+	builder := u.Builder
+	if u.Builder && menu != nil && len(menu.Buttons) > 0 && products == 0 {
+		builder = false
+		d.Evidence = append(d.Evidence, "build menu holds only footprint-less upgrades or unresolved names; not a production role")
 	}
 	set := func(role, subtype, why string) {
 		d.Role, d.Subtype = role, subtype
@@ -294,13 +308,13 @@ func classifyStrategicIcon(cat *content.Catalog, u *content.UnitDef) StrategicIc
 		set("fortification", "", "IsFeature; converted feature remains in feature layer")
 	case u.CanResurrect:
 		set("resurrection", "", "CanResurrect")
-	case u.Builder && u.BMCode == 0 && products > 0:
+	case builder && u.BMCode == 0 && products > 0:
 		set("factory", "", "BMCode=0; Builder; nonempty resolved final build menu")
 	case u.IsAirBase:
 		set("airbase", "", "IsAirBase; aircraft repair/support")
-	case u.Builder && products > 0:
+	case builder && products > 0:
 		set("construction", "", "Builder with final build products")
-	case u.Builder:
+	case builder:
 		set("assist", "", "Builder with empty product menu; general build/repair support")
 	case u.CanLoad && u.TransportCapacity > 0:
 		set("transport", "", "CanLoad and positive TransportCapacity")

@@ -53,6 +53,13 @@ type Program struct {
 	Statics        int
 	ScriptsByID    []int  // [fmt cob] ScriptCodeIndexArray in table order [04 §4.3]
 	SourceChecksum uint32 // four-accumulator checksum of original raw COB bytes [02 "Content checksum"]
+
+	// scriptNames is the script name table in table order, beside ScriptsByID.
+	// buildAnimation is the Builder speed mutator's derived function set
+	// (build_animation.go), computed once here from the bytecode. Both are
+	// pure functions of the fields above, set only by Load.
+	scriptNames    []string
+	buildAnimation []codeRange
 }
 
 // ContentChecksum is the retail four-accumulator byte checksum. Each lane is
@@ -257,6 +264,7 @@ func Load(data []byte) (*Program, error) {
 	}
 
 	scripts := make(map[string]int, numScripts)
+	scriptNames := make([]string, numScripts)
 	// Deterministic iteration: ascending index order (I1).
 	for i := uint32(0); i < numScripts; i++ {
 		name, err := readCString(scriptNameOffs[i])
@@ -266,6 +274,7 @@ func Load(data []byte) (*Program, error) {
 		if name == "" {
 			return nil, fmt.Errorf("cob: script %d has empty name", i)
 		}
+		scriptNames[i] = name
 		// Retail scans names case-sensitively in table order and returns the
 		// first match. Later duplicates remain callable by their script index
 		// through ScriptsByID [04 R-COB-01 §1].
@@ -300,10 +309,12 @@ func Load(data []byte) (*Program, error) {
 		Statics:        int(numStatics),
 		ScriptsByID:    byID,
 		SourceChecksum: sourceChecksum,
+		scriptNames:    scriptNames,
 	}
 	if err := ValidateProgram(prog); err != nil {
 		return nil, err
 	}
+	prog.buildAnimation = buildAnimationRanges(prog)
 	return prog, nil
 }
 

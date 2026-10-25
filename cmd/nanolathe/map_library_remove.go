@@ -40,12 +40,20 @@ func (g *gameShell) removableLibraryMap(logical string) (*modlibrary.Library, *m
 }
 
 func (g *gameShell) removableMapProvider(logical string, installed []modlibrary.Mod) *modlibrary.Mod {
-	tntPath := strings.TrimSuffix(logical, filepath.Ext(logical)) + ".tnt"
-	ota, err := g.cs.unmappedMount.Stat(logical)
-	if err != nil {
-		return g.skippedMapProvider(logical, tntPath, installed)
+	if _, err := g.cs.unmappedMount.Stat(logical); err != nil {
+		return g.skippedMapProvider(logical, strings.TrimSuffix(logical, filepath.Ext(logical))+".tnt", installed)
 	}
-	tnt, err := g.cs.unmappedMount.Stat(tntPath)
+	return g.cs.mapPackage(logical, installed)
+}
+
+// mapPackage is the downloaded or saved library package that supplies both
+// files of a mounted map, or nil.
+func (c *contentSet) mapPackage(logical string, installed []modlibrary.Mod) *modlibrary.Mod {
+	ota, err := c.unmappedMount.Stat(logical)
+	if err != nil {
+		return nil
+	}
+	tnt, err := c.unmappedMount.Stat(strings.TrimSuffix(logical, filepath.Ext(logical)) + ".tnt")
 	if err != nil {
 		return nil
 	}
@@ -53,7 +61,7 @@ func (g *gameShell) removableMapProvider(logical string, installed []modlibrary.
 		if !downloadReceipt(item) {
 			continue
 		}
-		if g.cs.mod != nil && modDirectoryMounted(item.Dir, []string{g.cs.mod.Dir}) {
+		if c.mod != nil && modDirectoryMounted(item.Dir, []string{c.mod.Dir}) {
 			continue
 		}
 		if pathInsideMapPackage(item.Dir, ota.Source.SourcePath) && pathInsideMapPackage(item.Dir, tnt.Source.SourcePath) {
@@ -65,7 +73,14 @@ func (g *gameShell) removableMapProvider(logical string, installed []modlibrary.
 
 func downloadReceipt(item modlibrary.Mod) bool {
 	source, err := url.Parse(item.Receipt.Source)
-	return err == nil && (source.Scheme == "https" || source.Scheme == "http") && source.Host != "" && len(item.Receipt.SHA256) == 64 && item.Receipt.Size > 0
+	return err == nil && ((source.Scheme == "https" || source.Scheme == "http") && source.Host != "" || generatedReceipt(source)) && len(item.Receipt.SHA256) == 64 && item.Receipt.Size > 0
+}
+
+// generatedReceipt reports a package the map generator saved: its receipt
+// names the map's code as a download's names its URL, and it is removed as
+// a downloaded map is (docs/DESIGN_MAP_GENERATOR.md §10).
+func generatedReceipt(source *url.URL) bool {
+	return source.Scheme == "generated" && source.Opaque != ""
 }
 
 // A package the mount left out supplies nothing, so no mounted provider can
@@ -337,10 +352,13 @@ func (g *gameShell) removeLibraryMap(logical string, target modlibrary.Mod) erro
 	}
 
 	if slices.IndexFunc(g.maps, func(s string) bool { return strings.EqualFold(s, g.setup.MapName) }) < 0 {
-		g.setup.MapName = ""
+		// The fallback is another map, so the removed map's chosen start
+		// points go with it.
+		replacement := ""
 		if len(g.maps) > 0 {
-			g.setup.MapName = g.maps[g.mapIdx]
+			replacement = g.maps[g.mapIdx]
 		}
+		g.setSetupMap(replacement)
 	}
 	mapDownload.mu.Lock()
 	mapDownload.outcome, mapDownload.unseen = "", false

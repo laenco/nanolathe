@@ -13,7 +13,7 @@ tactics = core.New("tactics", core.ScriptStrategy{}, &core.ScriptEconomy{}, tact
 
 Registered in `cmd/ai-arena/brain_tactics.go`. Ablation switches in the player
 spec: `route=0 micro=0 raid=0 defend=0 escort=0 budget=0 air=0 naval=0
-posture=0 passage=0 unseen=0`, margin shifts `em=<‰> rm=<‰> nm=<‰>` (e.g.
+posture=0 passage=0 unseen=0 warn=0 walls=0`, margin shifts `em=<‰> rm=<‰> nm=<‰>` (e.g.
 `tactics:hard:0:micro=0,label=T-nomicro`), for the attack posture
 `pv=main` (measure the main squad alone) and `pagg=<‰>` (aggression slope),
 and for early harassment `harass=0 probe=0 tour=0` with the tuning knobs
@@ -508,6 +508,61 @@ the main army (if the incident is at home, near the commander or threatens
 main is not winning a fight far away), accumulating responders until the
 responders plus own defenses/commander there reach 1.5.
 
+**Approach warning** (`warn`, `picture.go` and `army.go`). Incidents begin
+only at an asset, the base or the commander, so a base without sight of its
+approaches saw an attacking army only once it stood among the buildings, too
+late for a main army on an offensive to come back. Beyond that, the armed
+enemy ground units within 2400 wu of home — in sight, on radar (each blip a
+generic mid-weight unit), or remembered from the last five seconds — form
+one approaching force; aircraft and ships are left to their own squads.
+When it is worth at least 600 and the towers and commander a third of the
+way toward it, with the home guard, stand below 1.5 against it, the home
+guard and the main army defend that point: inside the base's towers, so the
+army meets the attack with their support. A squad answering an incident
+this think keeps it, the main army keeps an engagement within 1200 wu of the
+force's centre (it is fighting that force), and a main army no more than
+600 wu farther from home than the force is not away and is left to meet it,
+so an enemy army waiting nearby cannot pin it at home. `warn=0` turns it
+off.
+
+**Walls** (`walls`, `walls.go`; docs/DESIGN_SESSIONS_AI_SAVE.md "Modern AI
+walls"). A squad that walks into dragon's teeth used to stand at them for
+the rest of the game: patrol walks up and down the wall, so the stuck watch
+never fired, and the small-arms fire of most of the army bursts on a
+piece's face without harming it. An engaged ground squad now watches for
+wall pieces around its centre and front (`Kit.WatchWalls`, `Obs.Walls`).
+Held there — a quarter of its present value within 160 wu of a piece that
+is not ours, the front no 96 wu nearer the target for 300 − 2 × skill
+ticks — it:
+- fires at the piece nearest the wall's members that towers cover least
+  (attack the ground at its centre), with the members whose weapons harm
+  walls (`uclass.wallDPS`: area of effect ≥ 48 in full, 32 at half);
+- sends the members that cannot, while they stand in enemy fire, 300 wu back;
+- asks the economy for a constructor (`Board.BreachX`; utility README
+  §16);
+- retreats (reason `wall`) at half its held square-law strength or after
+  90 s with no piece down.
+
+When a piece falls the breakers patrol on; a squad still held takes the next
+piece, preferring one beside the gap. Focus fire waits while a squad is
+walled. `walls=0` restores the squad that stands at the wall.
+
+Measured 2026-10-20 in a scratch lab on Full Moon: a passive CORE base
+ringed by 66 dragon's teeth with 7 towers behind them, attacked for 40
+minutes by one computer player, four seeds per persona, `walls=0` against
+on:
+
+| persona | got inside | commander killed | unit-seconds at the wall |
+|---|---|---|---|
+| easy | 0 / 4 → **4 / 4** | 0 → 3 | 45,584 → **12,020** |
+| medium | 0 / 4 → **4 / 4** | 0 → 4 | 80,749 → **19,751** |
+| hard | 1 / 4 → **4 / 4** | 3 → 4 | 74,316 → **14,543** |
+
+The attacker loses about three times as much getting in as it did shot
+standing at the wall. Between computer players walls are rare and squads
+are seldom walled (in 2 of 384 easy games, 6 and 9 of 192 at medium and
+hard); the head-to-head results are in utility README §16.
+
 ### Threat-aware routing (`route.go`)
 
 Dijkstra over the sector grid (binary heap on reused buffers, 8-neighbour,
@@ -575,6 +630,7 @@ statistics, stuck units) and the six grids above.
 | stuckTicks | 900 | ordered but motionless → left out |
 | raid squad | ≥ 50 wu/s, ≤ 6 units, ≤ 20 % army; on 1500 / off 900 | |
 | home guard | ≤ 15 % army; on 800 / off 500 | |
+| approach warning | enemy ground force within 2400 wu of home, not yet an incident, worth ≥ 600, home holds < 1.5, main > 600 wu farther out than it; called to ⅓ of the way toward it | `warn=0` off |
 | withdraw | skill ≥ 40, < 30 % hp, value ≥ 90 | |
 | focus fire | skill ≥ 60, switch ≥ 45 ticks | |
 | route | cost 10 + 40·danger/dps + 12 unknown; used if < 80 % of direct; ≤ 3 waypoints | |

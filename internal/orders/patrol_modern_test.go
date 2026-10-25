@@ -70,119 +70,134 @@ func TestModernPatrolBorrowsWithSavedReturn(t *testing.T) {
 	}
 }
 
-func TestModernPatrolFailedJobKeepsSavedReturn(t *testing.T) {
+// Nanolathe Modern policy, user-authorized 2026-10-22 ("Smarter patrol"): a
+// failed job drops its saved-position return, remembers its target and
+// resumes the retained leg from where the builder stands on the next tick.
+func TestModernPatrolFailedJobDropsReturnAndRemembersTarget(t *testing.T) {
 	for _, air := range []bool{false, true} {
 		t.Run(fmt.Sprintf("air%v", air), func(t *testing.T) {
 			f := newModernWorkFixture(air)
-			f.units = []*units.Unit{modernPatient(2, 32, 0, true)}
+			target := modernPatient(2, 32, 0, true)
+			f.units = []*units.Unit{target}
 			workID := rowHelpBuild
-			moveID := rowMoveGround
 			if air {
-				workID, moveID = rowVTOLHelpBuild, Lookup("VTOL_Move")
+				workID = rowVTOLHelpBuild
 			}
 			attempts := 0
 			f.q.SetOwnedHandler(workID, func(*units.Unit, *Node, uint32, uint32) (Code, bool) { attempts++; return 8, true })
+			random, resources := f.sim, f.resources
 			f.q.Pump(f.u, 100)
-			if attempts != 1 || f.q.Head() == nil || f.q.Head().ID != moveID || len(f.q.primary) != 4 {
-				t.Fatalf("failed job attempts=%d remaining=%d head=%v: want retained return then route", attempts, len(f.q.primary), f.q.Head())
+			if attempts != 1 || f.q.Head() != f.patrol || len(f.q.primary) != 3 || f.q.primary[1] != f.next || f.q.primary[2] != f.successor {
+				t.Fatalf("failed job attempts=%d remaining=%d: want the retained route with no return", attempts, len(f.q.primary))
 			}
-		})
-	}
-}
-
-func TestModernPatrolPursuitUsesSavedSightCircle(t *testing.T) {
-	for _, air := range []bool{false, true} {
-		t.Run(fmt.Sprintf("air%v", air), func(t *testing.T) {
-			f := newModernWorkFixture(air)
-			f.u.X, f.u.Z = numeric.FixedFromInt(100), numeric.FixedFromInt(160)
-			f.u.Def.SightDistance = 280
-			target := modernPatient(2, 132, 160, true)
-			f.units = []*units.Unit{target}
-			f.visit(100)
-			work := f.q.Head()
-			f.u.X = numeric.FixedFromInt(1000)
-			target.X, target.Z = numeric.FixedFromInt(100), numeric.FixedFromInt(440)
-			if !f.q.binding.Rules.AutomaticWorkValid(f.u, work) {
-				t.Fatal("inclusive saved sight circle refused")
+			if !f.q.patrolWork.remembers(patrolMemoryUnit, target) {
+				t.Fatal("failed target was not remembered")
 			}
-			target.Z++
-			if f.q.binding.Rules.AutomaticWorkValid(f.u, work) {
-				t.Fatal("pursuit escaped the saved sight circle")
+			if f.patrol.DynamicGate != gateDeadline || f.patrol.Deadline != 101 {
+				t.Fatalf("failed job resumed the leg with gate %#x deadline %d, want the next tick", f.patrol.DynamicGate, f.patrol.Deadline)
 			}
 			f.q.Pump(f.u, 101)
-			if !f.q.PatrolWorkPaused() || !f.q.Head().IsPatrolReturn() {
-				t.Fatal("invalidated pursuit did not retain return and pause borrowing")
+			if attempts != 1 || f.q.Head() != f.patrol || f.sim != random || f.resources != resources {
+				t.Fatal("remembered target was selected again, or recovery changed RNG/resources")
 			}
 		})
 	}
 }
 
-func TestModernPatrolFailureRecoveryNeedsWaypointArrival(t *testing.T) {
+// The target must stay within or on the sight circle around the saved
+// acquisition point, and the builder within or on twice that radius of it
+// (P6). Leaving either abandons the job as a failure.
+func TestModernPatrolPursuitAndStrayBounds(t *testing.T) {
 	for _, air := range []bool{false, true} {
-		for _, outcome := range []uint32{gateArrived, gateNoRoute, 0x80} {
-			t.Run(fmt.Sprintf("air%v/outcome%x", air, outcome), func(t *testing.T) {
+		for _, escape := range []string{"target", "builder"} {
+			t.Run(fmt.Sprintf("air%v/%s", air, escape), func(t *testing.T) {
 				f := newModernWorkFixture(air)
-				target := modernPatient(2, 32, 0, true)
+				f.u.X, f.u.Z = numeric.FixedFromInt(100), numeric.FixedFromInt(160)
+				f.u.Def.SightDistance = 280
+				target := modernPatient(2, 132, 160, true)
 				f.units = []*units.Unit{target}
-				id := rowHelpBuild
-				if air {
-					id = rowVTOLHelpBuild
+				f.visit(100)
+				work := f.q.Head()
+				f.u.X = numeric.FixedFromInt(100 + 560)
+				target.X, target.Z = numeric.FixedFromInt(100), numeric.FixedFromInt(440)
+				if !f.q.binding.Rules.AutomaticWorkValid(f.u, work) {
+					t.Fatal("inclusive saved sight circle or stray bound refused")
 				}
-				f.q.SetOwnedHandler(id, func(*units.Unit, *Node, uint32, uint32) (Code, bool) { return 8, true })
-				f.q.Pump(f.u, 100)
-				if !f.q.PatrolWorkPaused() {
-					t.Fatal("failed work did not pause route borrowing")
+				if escape == "target" {
+					target.Z++
+				} else {
+					f.u.X++
 				}
-				back := f.q.Head()
-				move := back.ID
-				f.q.SetOwnedHandler(move, func(_ *units.Unit, n *Node, s uint32, _ uint32) (Code, bool) {
-					if s == 0 {
-						n.DynamicGate = gateMoveOutcomes
-						return 2, true
-					}
-					// Air reports code 5 for every movement outcome; ground reports 9 on failure.
-					if !air && s&gateArrived == 0 {
-						return 9, true
-					}
-					return 5, true
-				})
-				back.DynamicGate = gateMoveOutcomes
-				back.Satisfied = outcome
+				if f.q.binding.Rules.AutomaticWorkValid(f.u, work) {
+					t.Fatalf("%s escaped its bound", escape)
+				}
 				f.q.Pump(f.u, 101)
-				if f.q.Head() != f.patrol || !f.q.PatrolWorkPaused() || len(f.q.primary) != 3 {
-					t.Fatal("return outcome discarded route or cleared recovery pause")
-				}
-				scans := f.scans
-				f.visit(1000)
-				if f.scans != scans || f.q.Head() != f.patrol {
-					t.Fatal("maintenance borrowed again before a patrol waypoint")
-				}
-				r := f.q.binding.Rules
-				for _, s := range []uint32{0, gateNoRoute, 0x80} {
-					r.AutomaticWorkResult(f.u, f.patrol, s, 6, 1001)
-					if !f.q.PatrolWorkPaused() {
-						t.Fatal("rotation/failure falsely counted as arrival")
-					}
-				}
-				r.AutomaticWorkResult(f.u, f.patrol, gateArrived, 6, 1002)
-				if f.q.PatrolWorkPaused() {
-					t.Fatal("genuine patrol arrival did not restore borrowing")
+				if f.q.Head() != f.patrol || len(f.q.primary) != 3 || !f.q.patrolWork.remembers(patrolMemoryUnit, target) {
+					t.Fatal("abandoned pursuit kept its return or forgot the target")
 				}
 			})
 		}
 	}
 }
 
+// Only a genuine patrol-waypoint arrival forgets the memory: maintenance,
+// rotation without arrival, payload release and no-route do not.
+func TestModernPatrolMemoryForgottenAtWaypointArrival(t *testing.T) {
+	for _, air := range []bool{false, true} {
+		t.Run(fmt.Sprintf("air%v", air), func(t *testing.T) {
+			f := newModernWorkFixture(air)
+			target := modernPatient(2, 32, 0, true)
+			f.units = []*units.Unit{target}
+			id := rowHelpBuild
+			if air {
+				id = rowVTOLHelpBuild
+			}
+			f.q.SetOwnedHandler(id, func(*units.Unit, *Node, uint32, uint32) (Code, bool) { return 8, true })
+			f.q.Pump(f.u, 100)
+			f.q.primary = []*Node{f.patrol, f.next, f.successor}
+			f.visit(1000)
+			if f.q.Head() != f.patrol || !f.q.patrolWork.remembers(patrolMemoryUnit, target) {
+				t.Fatal("maintenance selected or forgot a remembered target")
+			}
+			r := f.q.binding.Rules
+			for _, tc := range []struct {
+				satisfied uint32
+				code      Code
+			}{{0, 6}, {gateNoRoute, 6}, {0x80, 6}, {gateArrived | gateNoRoute, 6}, {gateArrived, 2}, {gateArrived, 5}} {
+				r.AutomaticWorkResult(f.u, f.patrol, tc.satisfied, tc.code, 1001)
+				if !f.q.patrolWork.remembers(patrolMemoryUnit, target) {
+					t.Fatalf("satisfied %#x code %d falsely counted as arrival", tc.satisfied, tc.code)
+				}
+			}
+			r.AutomaticWorkResult(f.u, f.next, gateArrived, 6, 1002)
+			if f.q.patrolWork != (patrolWorkState{scanDue: f.q.patrolWork.scanDue}) {
+				t.Fatal("genuine patrol arrival did not forget the memory")
+			}
+			f.visit(1003)
+			if f.q.Head().Target != target.Handle {
+				t.Fatal("forgotten target was not selectable again")
+			}
+		})
+	}
+}
+
+// Ground repair can report code 5 for an unsuccessful ending. A repair that
+// left its patient damaged, airborne or dead is a failure and remembers it; a
+// patient at full health either succeeded or, when the leash broke the job,
+// no longer needs the work, which is neutral.
 func TestModernPatrolSemanticRepairFailure(t *testing.T) {
 	for _, air := range []bool{false, true} {
-		for _, failure := range []string{"dead", "airborne", "leash", "healthy"} {
-			t.Run(fmt.Sprintf("air%v/%s", air, failure), func(t *testing.T) {
+		for _, tc := range []struct {
+			outcome            string
+			remembered, failed bool
+		}{{"dead", true, true}, {"airborne", true, true}, {"damaged", true, true}, {"leash", false, true}, {"healthy", false, false}} {
+			t.Run(fmt.Sprintf("air%v/%s", air, tc.outcome), func(t *testing.T) {
 				f := newModernWorkFixture(air)
 				target := modernPatient(2, 32, 0, false)
 				f.units = []*units.Unit{target}
 				f.visit(100)
 				work := f.q.Head()
-				switch failure {
+				switch tc.outcome {
 				case "dead":
 					target.Alive = false
 				case "airborne":
@@ -194,37 +209,42 @@ func TestModernPatrolSemanticRepairFailure(t *testing.T) {
 				case "healthy":
 					target.Health = target.Def.MaxDamage
 				}
-				// Both ordinary repair executors can report code 5 for unsuccessful endings.
-				f.q.binding.Rules.AutomaticWorkResult(f.u, work, 0, 5, 101)
-				if got := f.q.PatrolWorkPaused(); got != (failure != "healthy") {
-					t.Fatalf("pause=%v for semantic repair outcome %s", got, failure)
+				code := f.q.binding.Rules.AutomaticWorkResult(f.u, work, 0, 5, 101)
+				if got := f.q.patrolWork.remembers(patrolMemoryUnit, target); got != tc.remembered || (code == 8) != tc.failed {
+					t.Fatalf("remembered=%v code=%d for semantic repair outcome %s", got, code, tc.outcome)
 				}
 			})
 		}
 	}
 }
 
-func TestModernPatrolRecoveryReplacementAndStrictBypass(t *testing.T) {
+func TestModernPatrolMemoryReplacementAndStrictBypass(t *testing.T) {
 	f := newModernWorkFixture(false)
-	f.q.patrolWorkPaused = true
+	entry := patrolMemoryEntry{kind: patrolMemoryFeature, cx: 1, cz: 2}
+	f.q.patrolWork.remember(entry)
+	f.q.patrolWork.scanDue = 300
+	held := f.q.patrolWork
 	f.q.Push(rowMoveGround, Node{QueuedIssue: true})
-	if !f.q.PatrolWorkPaused() {
-		t.Fatal("queued successor reset failure pause")
+	if f.q.patrolWork != held {
+		t.Fatal("queued successor reset the patrol memory")
 	}
 	f.q.Push(Lookup("Standing_MoveOrder"), Node{})
-	if !f.q.PatrolWorkPaused() {
-		t.Fatal("stance issue reset assignment pause")
+	if f.q.patrolWork != held {
+		t.Fatal("stance issue reset the patrol memory")
 	}
 	f.q.PurgeUnprotected()
 	f.q.Push(rowRepairPatrol, Node{})
-	if f.q.PatrolWorkPaused() {
-		t.Fatal("replacement patrol retained old assignment pause")
+	if f.q.patrolWork != (patrolWorkState{}) {
+		t.Fatal("replacement patrol retained the old assignment's memory or cadence")
 	}
 	for _, r := range []Rules{StrictRules{}, &CommunityRules{}} {
-		f.q.patrolWorkPaused = true
+		f.q.patrolWork = held
 		state, resources := f.sim, f.resources
-		if code := r.AutomaticWorkResult(f.u, f.patrol, gateArrived, 6, 200); code != 6 || !f.q.PatrolWorkPaused() || f.sim != state || f.resources != resources {
+		if code := r.AutomaticWorkResult(f.u, f.patrol, gateArrived, 6, 200); code != 6 || f.q.patrolWork != held || f.sim != state || f.resources != resources {
 			t.Fatalf("%T changed bypass state", r)
+		}
+		if r.PatrolWorkWake(f.u, f.patrol, 400) || f.q.patrolWork != held || f.sim != state {
+			t.Fatalf("%T woke a patrol between maintenance visits", r)
 		}
 	}
 }
@@ -239,12 +259,14 @@ func TestModernPatrolSuccessfulWorkContinuesPendingLeg(t *testing.T) {
 			if air {
 				id = rowVTOLHelpBuild
 			}
-			f.q.SetOwnedHandler(id, func(*units.Unit, *Node, uint32, uint32) (Code, bool) {
+			f.q.SetOwnedHandler(id, func(_ *units.Unit, n *Node, _ uint32, _ uint32) (Code, bool) {
+				// A real executor completes from its work phase (ground 4, air 3).
+				n.Phase = 3
 				target.Remaining, target.Health = 0, target.Def.MaxDamage
 				return 5, true
 			})
 			f.q.Pump(f.u, 100)
-			if f.q.Head() != f.patrol || f.q.PatrolWorkPaused() || len(f.q.primary) != 3 {
+			if f.q.Head() != f.patrol || f.q.patrolWork.entries != [modernPatrolMemorySize]patrolMemoryEntry{} || len(f.q.primary) != 3 {
 				t.Fatal("successful work did not resume the pending patrol leg without returning")
 			}
 			if f.q.primary[1] != f.next || f.q.primary[2] != f.successor {
@@ -286,6 +308,7 @@ func TestModernPatrolConsecutiveJobsKeepWaypointOrder(t *testing.T) {
 					// Stand in for paid work and its approach; stock session fixtures
 					// below exercise those executors and actual onward movement.
 					f.u.X = target.X
+					n.Phase = 3 // the work phase a real executor completes from
 					target.Remaining, target.Health = 0, target.Def.MaxDamage
 					completed++
 					return 5, true
@@ -326,7 +349,13 @@ func TestPatrolSuccessfulWorkRemovalRequiresModernProvenance(t *testing.T) {
 						f.visit(100)
 						work, back := f.q.Head(), f.q.primary[1]
 						target.Remaining, target.Health = 0, target.Def.MaxDamage
-						if kind == "repair" {
+						if kind == "build" {
+							// HelpBuild completes from its work phase: ground 4, air 3.
+							work.Phase = 4
+							if air {
+								work.Phase = 3
+							}
+						} else if kind == "repair" {
 							work.ID = rowRepairUnit
 							if air {
 								work.ID = rowVTOLRepairUnit
@@ -349,8 +378,8 @@ func TestPatrolSuccessfulWorkRemovalRequiresModernProvenance(t *testing.T) {
 						if removed := f.q.indexOfPrimary(back) < 0; removed != (modern && proven) {
 							t.Fatal("return removal crossed the mode/provenance boundary")
 						}
-						if f.sim != random || f.resources != resources || f.q.PatrolWorkPaused() {
-							t.Fatal("successful outcome changed RNG, resources or failure pause")
+						if f.sim != random || f.resources != resources || f.q.patrolWork.entries != [modernPatrolMemorySize]patrolMemoryEntry{} {
+							t.Fatal("successful outcome changed RNG, resources or the failure memory")
 						}
 					})
 				}
@@ -359,20 +388,23 @@ func TestPatrolSuccessfulWorkRemovalRequiresModernProvenance(t *testing.T) {
 	}
 }
 
-func TestModernPatrolDangerInterruptionRetainsReturnAndRecovery(t *testing.T) {
+// Danger abandons automatic repair like any other failed job: the return
+// goes, the patient is remembered and the danger response resumes the patrol.
+func TestModernPatrolDangerInterruptionDropsReturnAndRemembers(t *testing.T) {
 	f := newModernWorkFixture(false)
-	f.units = []*units.Unit{modernPatient(2, 32, 0, false)}
+	patient := modernPatient(2, 32, 0, false)
+	f.units = []*units.Unit{patient}
 	f.visit(100)
-	back := f.q.primary[1]
 	f.q.suspendDangerAssignment(f.u)
-	if f.q.Head() != back || f.q.danger.resume != back || !f.q.PatrolWorkPaused() || f.q.primary[1] != f.patrol {
-		t.Fatal("danger discarded saved return or failure recovery")
+	if f.q.Head() != f.patrol || f.q.danger.resume != f.patrol || !f.q.patrolWork.remembers(patrolMemoryUnit, patient) || len(f.q.primary) != 3 {
+		t.Fatal("danger kept the saved return or forgot the abandoned patient")
 	}
+	held := f.q.patrolWork
 	f.q.binding.Rules = StrictRules{}
 	f.q.SetBinding(f.q.binding)
 	f.q.binding.Rules = &ModernRules{}
 	f.q.SetBinding(f.q.binding)
-	if f.q.Head() != back || !f.q.PatrolWorkPaused() {
+	if f.q.Head() != f.patrol || f.q.patrolWork != held {
 		t.Fatal("rebinding or mode switch discarded staged assignment state")
 	}
 	// A danger response must keep construction already in progress protected.
@@ -419,24 +451,31 @@ func TestModernPatrolFeatureCompletionUsesExecutorPhase(t *testing.T) {
 			if air {
 				work.Phase = 4
 			}
-			if code := f.q.binding.Rules.AutomaticWorkResult(f.u, work, 0, 5, 101); code != 5 || f.q.PatrolWorkPaused() {
+			if code := f.q.binding.Rules.AutomaticWorkResult(f.u, work, 0, 5, 101); code != 5 || f.q.patrolWork.entries != [modernPatrolMemorySize]patrolMemoryEntry{} {
 				t.Fatal("completed feature payout was classified as failed work")
 			}
 		})
 	}
 }
 
-func TestModernPatrolAirReturnTakeoffIsNotDestinationArrival(t *testing.T) {
-	f := newModernWorkFixture(true)
-	f.units = []*units.Unit{modernPatient(2, 32, 0, true)}
-	f.visit(100)
-	back := f.q.primary[1]
-	back.Phase = 1
-	r := f.q.binding.Rules
-	r.AutomaticWorkResult(f.u, back, gateArrived, 1, 101)
-	back.Phase = 2
-	if code := r.AutomaticWorkResult(f.u, back, gateNoRoute, 5, 102); code != 8 || !f.q.PatrolWorkPaused() {
-		t.Fatal("takeoff arrival hid a failed saved-position flight")
+// A saved-position return reaches the head only across a rule switch, since
+// every Modern job end removes it. It then ends quietly: a failed move is
+// dropped instead of cancelling or retrying the route, and nothing is
+// remembered.
+func TestModernPatrolReturnAcrossRuleSwitchEndsQuietly(t *testing.T) {
+	for _, air := range []bool{false, true} {
+		t.Run(fmt.Sprintf("air%v", air), func(t *testing.T) {
+			f := newModernWorkFixture(air)
+			f.units = []*units.Unit{modernPatient(2, 32, 0, true)}
+			f.visit(100)
+			back := f.q.primary[1]
+			r := f.q.binding.Rules
+			for _, tc := range []struct{ code, want Code }{{5, 5}, {7, 8}, {8, 8}, {9, 8}, {2, 2}} {
+				if got := r.AutomaticWorkResult(f.u, back, gateNoRoute, tc.code, 101); got != tc.want || f.q.patrolWork.entries != [modernPatrolMemorySize]patrolMemoryEntry{} {
+					t.Fatalf("return code %d became %d (want %d) or was remembered", tc.code, got, tc.want)
+				}
+			}
+		})
 	}
 }
 
@@ -444,23 +483,12 @@ func TestModernPatrolArrivalRetainsNormalPayloadRelease(t *testing.T) {
 	for _, air := range []bool{false, true} {
 		t.Run(fmt.Sprintf("air%v", air), func(t *testing.T) {
 			f := newModernWorkFixture(air)
-			f.units = []*units.Unit{modernPatient(2, 32, 0, true)}
-			f.visit(100)
-			back := f.q.primary[1]
-			back.Phase = 1
-			if air {
-				back.Phase = 2
-			}
-			r := f.q.binding.Rules
+			f.q.patrolWork.remember(patrolMemoryEntry{kind: patrolMemoryFeature, cx: 5})
 			// The movement producer raises arrival before normal payload detach, so
 			// both bits survive to the executor [04 R-PATH-01 §8][04 R-AIR-01 §1].
-			if code := r.AutomaticWorkResult(f.u, back, gateArrived|0x80, 5, 101); code != 5 || !back.PatrolReturnArrived() || f.q.PatrolWorkPaused() {
-				t.Fatal("normal arrived-and-detached return was classified as failure")
-			}
-			f.q.patrolWorkPaused = true
-			r.AutomaticWorkResult(f.u, f.patrol, gateArrived|0x80, 6, 102)
-			if f.q.PatrolWorkPaused() {
-				t.Fatal("normal waypoint arrival did not clear recovery pause")
+			f.q.binding.Rules.AutomaticWorkResult(f.u, f.patrol, gateArrived|0x80, 6, 102)
+			if f.q.patrolWork.remembersFeature(5, 0) {
+				t.Fatal("normal waypoint arrival did not forget the memory")
 			}
 		})
 	}
@@ -471,7 +499,7 @@ func TestModernPatrolRetailSaveKeepsReturnButLosesReceipts(t *testing.T) {
 	f.u.X, f.u.Y, f.u.Z = numeric.FixedFromInt(100), numeric.FixedFromInt(17), numeric.FixedFromInt(160)
 	f.units = []*units.Unit{modernPatient(2, 132, 160, true)}
 	f.visit(100)
-	f.q.patrolWorkPaused = true
+	f.q.patrolWork.remember(patrolMemoryEntry{kind: patrolMemoryFeature, cx: 1, cz: 2})
 	ids := map[pool.Handle]uint16{f.u.Handle: 1, f.units[0].Handle: 2}
 	images, err := RetailOrderImagesWithPayload(f.u, func(h pool.Handle) (uint16, bool) { id, ok := ids[h]; return id, ok }, func(pool.Handle) bool { return true }, nil)
 	if err != nil {
@@ -486,7 +514,7 @@ func TestModernPatrolRetailSaveKeepsReturnButLosesReceipts(t *testing.T) {
 	}
 	q := QueueOfUnit(f.u)
 	back := q.primary[1]
-	if back.ID != rowMoveGround || back.GoalX != f.u.X || back.GoalY != f.u.Y || back.GoalZ != f.u.Z || back.IsPatrolReturn() || q.PatrolWorkPaused() || q.Head().workAssignment != nil || q.Head().workReturn != nil || !q.binding.Rules.AutomaticWorkValid(f.u, q.Head()) {
+	if back.ID != rowMoveGround || back.GoalX != f.u.X || back.GoalY != f.u.Y || back.GoalZ != f.u.Z || back.IsPatrolReturn() || q.patrolWork != (patrolWorkState{}) || q.Head().workAssignment != nil || q.Head().workReturn != nil || !q.binding.Rules.AutomaticWorkValid(f.u, q.Head()) {
 		t.Fatal("retail save boundary changed ordinary return or inferred producer receipts")
 	}
 }

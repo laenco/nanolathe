@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Append Cyrillic glyphs to the film glyph atlases (docs/DESIGN_I18N.md).
+
+Barlow has no Cyrillic, so the Cyrillic glyphs come from Fira Sans, scaled so
+its cap height matches Barlow's. The Latin glyphs tools/film-font produced
+are kept byte for byte: this script crops each atlas back to them and lays the
+Cyrillic glyphs out in rows below, so it can run again on its own output.
+
+Usage:
+  tools/film-font-cyrillic /path/to/FiraSansExtraCondensed-ExtraBold.ttf /path/to/FiraSans-Medium.ttf
+Source revision, checksums and license: internal/film/assets/README.md.
+"""
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+from PIL import Image, ImageDraw, ImageFont
+
+# The Latin set tools/film-font rasterizes; everything else is regenerated.
+LATIN = "".join(chr(i) for i in range(32, 127)) + "–—‘’“”×…"
+# Ukrainian and the rest of basic Cyrillic, with the Ukrainian apostrophe,
+# the numero sign and guillemets.
+CYRILLIC = ("".join(chr(i) for i in range(0x0410, 0x0450)) +
+            "ЁёҐґЄєІіЇїʼ№«»")
+OUT = Path(__file__).resolve().parent.parent / "internal/film/assets"
+
+
+def append(source, name):
+    meta = json.loads((OUT / (name + ".json")).read_text())
+    latin = {c: g for c, g in meta["glyphs"].items() if c in LATIN}
+    bottom = max(g["y"] + g["h"] for g in latin.values())
+    base = Image.open(OUT / (name + ".png")).convert("L").crop((0, 0, 2048, bottom))
+
+    probe = ImageFont.truetype(source, 256)
+    size = 256 * meta["cap"] / -probe.getbbox("Н", anchor="ls")[1]
+    font = ImageFont.truetype(source, round(size))
+    glyphs, rows = {}, []
+    x = row_height = 0
+    y = bottom + 4
+    for char in CYRILLIC:
+        left, top, right, bottom_ = font.getbbox(char, anchor="ls")
+        width, height = right - left, bottom_ - top
+        if x + width + 4 > 2048:
+            x, y, row_height = 0, y + row_height + 4, 0
+        rows.append((char, x - left, y - top))
+        glyphs[char] = dict(x=x, y=y, w=width, h=height, left=left, top=top,
+                            advance=font.getlength(char))
+        x += width + 4
+        row_height = max(row_height, height)
+    atlas = Image.new("L", (2048, y + row_height))
+    atlas.paste(base, (0, 0))
+    draw = ImageDraw.Draw(atlas)
+    for char, px, py in rows:
+        draw.text((px, py), char, font=font, fill=255, anchor="ls")
+
+    kerning = {k: v for k, v in meta["kerning"].items() if k[0] in LATIN and k[1] in LATIN}
+    for a in CYRILLIC:
+        for b in CYRILLIC:
+            adjustment = font.getlength(a + b) - font.getlength(a) - font.getlength(b)
+            if adjustment:
+                kerning[a + b] = adjustment
+    meta["glyphs"] = {**latin, **glyphs}
+    meta["kerning"] = kerning
+    atlas.save(OUT / (name + ".png"))
+    (OUT / (name + ".json")).write_text(json.dumps(meta, separators=(",", ":"), ensure_ascii=False) + "\n")
+    print(name, "cyrillic source sha256:", hashlib.sha256(Path(source).read_bytes()).hexdigest(),
+          "size", round(size), "atlas", atlas.size)
+
+
+if len(sys.argv) != 3:
+    sys.exit(__doc__)
+append(sys.argv[1], "display")
+append(sys.argv[2], "body")

@@ -464,8 +464,8 @@ func TestEntrySitesApplyMutatorsInStrict(t *testing.T) {
 // It also checks that at ×4 no maxdamage or weapon damage passes 32,767, the
 // signed 16-bit live health and packet amount they reach [04 §4.4][06 §9.2],
 // and logs how many stock records the cap saturates; that Unit speed ×4 keeps
-// every aircraft's flight decay positive [04 §10.1]; and that no metal deposit
-// is scaled [05 R-FEAT-01 §7].
+// every aircraft's flight decay positive [04 §10.1], with Builder speed ×20
+// beside it; and that no metal deposit is scaled [05 R-FEAT-01 §7].
 //
 // Skipped without retail assets.
 func TestStockCatalogUnderExtremeSteps(t *testing.T) {
@@ -478,9 +478,14 @@ func TestStockCatalogUnderExtremeSteps(t *testing.T) {
 	if err := f.cat.Clone().ApplyMutators(every(slowest)); err != nil {
 		t.Fatalf("stock catalog refused %s: %v", slowest, err)
 	}
+	// Builder speed takes its own largest step beside the shared one. It never
+	// scales a flying builder's acceleration, so the flight decay check below
+	// holds with it (docs/DESIGN_MODS_MUTATORS.md "Builder speed").
+	highest := every(top)
+	highest.BuilderSpeed = content.BuilderSpeedSteps[len(content.BuilderSpeedSteps)-1]
 	high := f.cat.Clone()
-	if err := high.ApplyMutators(every(top)); err != nil {
-		t.Fatalf("stock catalog refused %s: %v", top, err)
+	if err := high.ApplyMutators(highest); err != nil {
+		t.Fatalf("stock catalog refused %s: %v", highest.String(), err)
 	}
 	slow := f.cat.Clone()
 	if err := slow.ApplyMutators(content.Mutators{BuildSpeed: slowest}); err != nil {

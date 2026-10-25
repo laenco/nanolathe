@@ -814,8 +814,14 @@ history stays one grid per player (Q24); what a teammate sees also explores
 each member's own grid, as it does for Survival's survivors, so a teammate's
 view never draws as unexplored. Retail's sharing commands and alliance
 declarations add to it (§7.1). This is Nanolathe's online policy;
-retail never merges allies' sight by default `[03 §3.2]`. Single-player
-battles are unchanged.
+retail never merges allies' sight by default `[03 §3.2]`. Since 2026-10-18
+(user-authorized Nanolathe Modern policy) the host of a Modern or Community
+3.9 room may keep a skirmish room's teams' sight separate with the lobby's
+Allied Sight button, required configuration extension 18 (§8.6); the default shares it,
+as every earlier online skirmish did. A Strict 3.1 room offers no button and
+its configuration refuses the choice (`SeatRules.AlliedSightChoice`). A
+single-player skirmish shares a team's sight only with its own Allied Sight
+option (DESIGN_SESSIONS_AI_SAVE "Modern allied sight").
 
 **Sharing time (Q25).** Periodic explored-map shares run at their existing
 due site on the request tick, humans in canonical seat order, each copying
@@ -1344,8 +1350,58 @@ without NUL, at most N bytes, checked before allocation; `digest` is exactly
 order; duplicate or unsorted map keys are rejected. The whole configuration
 is at most 2 MiB. Its identity is SHA-256 of the literal UTF-8 domain
 `nanolathe/match-config/2` (no trailing NUL) followed by this positional
-encoding. There are no optional unknown fields or trailing bytes; adding a
-field requires a new version.
+encoding, including any extension records below. Fields 1–16 are frozen;
+additive fields use the extension tail rather than changing their layout
+or renumbering them. A configuration with no extensions retains its exact
+existing version-2 bytes and identity.
+
+**Configuration extensions (user-authorized 2026-10-19).** After field 16,
+an optional tail contains records `{ID u16, Flags u8, Size u32, Data[Size]}`
+in strictly ascending ID order, terminated by ID zero. IDs 1–16 remain
+reserved for the positional fields; extension IDs begin at 17. Bit 0 of
+Flags means required; every other bit is invalid. At most 128 records are
+admitted, each with at most 64 KiB of payload, within the existing 2 MiB
+configuration bound. An empty tail, missing terminator, duplicate or
+unsorted ID, or bytes after the terminator are noncanonical and refused.
+No tail is written when no extensions exist.
+
+Unknown optional records are descriptive metadata only: they are retained,
+deep-copied and included in the configuration identity, but change nothing
+the simulation computes. Unknown required records are refused by ID before
+composition, by readers and writers alike. Gameplay choices use required
+records with typed validation and application through the existing owning
+`RuleSet` seam. The assigned records are:
+
+| ID | Required payload and admission |
+|---|---|
+| 17. Chosen starts | Per seat in slot order, a `bool` set, followed when set by X and Z as two `u32` world pixels below 2^20. At least one seat must choose; omit the record when every start is Auto. Only a skirmish's human or computer row may choose, under `SeatRules.ChosenStarts` (DESIGN_SESSIONS_AI_SAVE "Modern chosen start positions"). |
+| 18. Allied sight | One `u8`: 1 separate or 2 shared. Omit for the inherited default: online skirmish teams share, single-player teams do not. Survival always shares and carries no choice. `SeatRules.AlliedSightChoice` must permit the record (DESIGN_SESSIONS_AI_SAVE "Modern allied sight"). |
+| 19. Builder speed | One `u8`: the Builder speed step index 1..5 for ×2, ×3, ×5, ×8, ×20. Omit it for the identity; index 0 is refused. Field 11's eleven indices are frozen, so this mutator's own step list travels here; a typed request must agree with the record. Mutators apply in every mode, Strict 3.1 included, so no `RuleSet` answer gates it ([DESIGN_MODS_MUTATORS §6.7](DESIGN_MODS_MUTATORS.md)). |
+| 20. Generated map | The recipe of the generated map the battle is played on, as the host wrote it: at most 64 KiB, never empty; omit the record for any other map. It is no gameplay choice and changes nothing a tick computes, since the map's own files are the content identity's; it is what reproducing the battle needs. The configuration carries it as opaque bytes; the host playing the battle reads it, makes the map again when it is not mounted, and refuses rather than play another map of that name. Skirmish and Survival alike (DESIGN_MAP_GENERATOR §10). |
+
+All four require flag bit 0, and an optional spelling is refused. Records
+17–19 also refuse a malformed payload, trailing payload bytes or an explicit
+default; record 20's payload is opaque here, so only an empty one is refused,
+and the host validates the recipe when it reads it. The local API exposes
+`MatchSeat.Start`, `MatchConfigRequest.AlliedSight`,
+`MatchConfigRequest.Mutators.BuilderSpeed` and
+`MatchConfigRequest.GeneratedMap`; recognized raw records are projected into
+those fields during resolution and removed from the opaque `Extensions`
+slice. Supplying both spellings requires equal values. Encoding
+reconstructs the required records, followed by opaque metadata in ID order,
+so changing a typed choice cannot leave stale wire bytes behind. The combined
+record count retains the 128-record bound. Strict 3.1 refuses both choices
+through the existing `SeatRules` answers.
+
+No battle choice may reuse field 16, which names room content, or be marked
+optional so an older simulation silently ignores it. Main builds that do not
+implement these records refuse required IDs 17–20 explicitly. Readers from
+before the extension contract refuse any nonempty tail; later readers can
+skip future optional metadata without a configuration-version bump. Existing
+v1 and original-v2 recordings keep their original bytes, identity domain and
+checksum validation (§10). Current default configurations retain main's
+version-2 encoding and identity; they add no extension tail. Changing a
+frozen field's meaning still needs a new schema.
 
 | Order / effective field | Representation and normalization |
 |---|---|
@@ -1357,7 +1413,7 @@ field requires a new version.
 | 6. UnitLimit, SimulationSeed, CRTSeed | `u16` 20..3276, then two `u32`. The Community unit-limit override is already applied. Seeds are explicit, zero included; composition uses the existing seed constructors. |
 | 7. Survival | Pace `u8` (0 normal, 1 relaxed, 2 relentless), NoAir `bool`, NoNaval `bool`. All zero for SessionKind 1. |
 | 8. Mod | ID `text(255)`, Version `text(255)`, Archive `digest`. All empty/zero for base content; a mod requires all three. These are public identities, not local paths, so only a mod installed from its archive can be hosted (§16.6.2). |
-| 9. Content profile | Name `text(255)`, at most 64 directory pairs `{From text(255), To text(1024)}` in canonical logical-key order, then Units `u32`, Weapons `u32`, TNTBytes `u64`, LOSBytes `u64`. Units 1..65536, Weapons 1..MaxInt32, byte caps 1..MaxInt64; content defaults 512/256/16 MiB/1 MiB for absent local inputs. Redundant identity mappings are rejected. These are metadata limits, never instructions to allocate; they are validated against the locally admitted profile before loading. |
+| 9. Content profile | Name `text(255)`, at most 64 directory pairs `{From text(255), To text(1024)}` in canonical logical-key order, then Units `u32`, Weapons `u32`, TNTBytes `u64`, LOSBytes `u64`. Units 1..65536, Weapons 1..MaxInt32, byte caps 1..MaxInt64; content defaults 512/256/128 MiB/8 MiB for absent local inputs. Redundant identity mappings are rejected. These are metadata limits, never instructions to allocate; they are validated against the locally admitted profile before loading. |
 | 10. Community | Length `u32` and at most 16 KiB of the canonical `community.Features` JSON used by `Features.Digest`, with its closed vocabulary, integer validation and `RepairRate` subrecord. The resolved value is encoded; unknown fields are refused and exact re-encoding required. Strict requires exactly the zero feature value. Online the host sends the mounted content's own table, never a player's overrides (§16.6.2). |
 | 11. Mutators | Eleven `u8` step indices in this order: BuildSpeed, BuildCost, Health, Damage, AreaOfEffect, Sight, Radar, Income, Salvage, FireRate, UnitSpeed. Indices 0..7 mean ¼, ½, ¾, 1, 1½, 2, 3, 4; a missing or zero Factor and 1/1 both encode 3. Applied once to the battle's catalog clone. |
 | 12. Unit restrictions | At most 65535 records `{DefinitionID u16, Unit key, Limit u8}` in ascending nonzero definition-ID order. `DefinitionID` is the record's index in the unrestricted compiled catalog and `Unit` its canonical name key; `Limit` 0 removes the record from the battle catalog and 1..100 caps each player's records of it at the allocator `[05 R-SHARE-01 §8]` `[05 R-SHARE-01 §9]`. Omitted means unrestricted, and nothing is seeded: a `wacky` definition is restricted only by an explicit record. The value is `content.Restrictions` mapped as [DESIGN_MODS_MUTATORS §15.3](DESIGN_MODS_MUTATORS.md#153-names-and-resolution) states — every record carrying a named key present, with one limit — and composition applies it to the catalog clone before the mutators. Each key is verified against its immutable record, preserving duplicate-name identities; duplicate IDs, a partial name group, `norestrict` definitions and removing a side's commander are rejected. The online lobby carries the host's set (§16.6). |
@@ -1438,7 +1494,7 @@ Provider, path and size diagnostics are returned separately and excluded.
 | COB/model | Every admitted unit's resolved program and missing/fallback state, units not yet created included; the parsed model hierarchy, piece origins, authoritative geometry and derived heights. Never a filename alone. |
 | SimArt | Canonical sequence names and defined misses, ordered frame geometry and holds, and feature animation metadata the simulation consumes. |
 | Map | The exact selected OTA/TNT inputs and schema, plus scenario inputs actually consumed. |
-| AI | The selected profile and default-fallback state, with ordered directives and argument order (repeated multipliers do not commute). |
+| AI | The selected profile and default-fallback state, with ordered directives and argument order (repeated multipliers do not commute). When a Modern computer plays, also the products each builder's own build pages install, which only that controller reads (`modern/installed-products`). |
 | Extensions/mutators | The effective Community table and the applied mutator vector, tied to the prepared clone; a mutator is never applied twice. |
 
 **Build manifest.** The common build manifest uses domain
@@ -1696,9 +1752,40 @@ stream state at its start so it decodes alone: command, pump run
 reason: finished, left, recording stopped, room failed). Integers are the
 netproto version-1 primitives. A file that stops inside a chunk, or without
 its end entry, plays to its last whole chunk and is listed as incomplete.
-Version 2 added the header's add-ons, and a version-1 file is not read:
-released builds wrote version-1 battle configurations, which this build no
-longer decodes either.
+Version 2 added the header's add-ons. Readers accept both versions: version
+1 ends its fixed header after the start time and decodes its configuration
+as fields 1–15, retaining the exact canonical bytes and the
+`nanolathe/match-config/1` identity domain; version 2 includes field 16 and
+uses the version-2 domain. The legacy decoder is a replay-only entry point;
+live room decoding remains version 2. New recordings are written as version
+2; a header read from a version-1 file cannot simply be relabeled as version
+2 by the writer.
+
+**Extensible version-2 headers (user-authorized 2026-10-19).** The fixed
+prefix through the add-on list is frozen. New writers append records
+`{ID u16, Flags u8, Size u32, Data[Size]}` in strictly ascending nonzero ID
+order inside an area of at least 256 bytes. New metadata consumes this reserve
+before the area grows; the unused tail is zeroed, with at least one byte for
+the ID-zero terminator. Every byte after that terminator must be zero padding. The existing header
+size bounds the entire area and locates the first command chunk; no fixed
+offset into this reserve is a public field. Each payload is at most 64 KiB,
+at most 128 records are admitted, and the existing 4 MiB header ceiling
+still applies. Older version-2 files ending immediately after the add-on
+list remain readable. The chunk framing and command, pump and checksum
+entries are unchanged.
+
+Flag bit 0 means required and all other bits are invalid. There are no
+assigned header extension IDs yet. Unknown optional records are preserved
+as opaque bytes and skipped for playback; unknown required records name an
+unsupported replay feature and are refused by both reader and writer.
+Malformed lengths, duplicate or unsorted IDs, a missing terminator and
+nonzero padding are refused. New metadata uses an unused tagged record;
+it does not append another positional field or require a replay-format
+bump. Information needed to reproduce a battle belongs in a required
+configuration extension (§8.6), not an optional header annotation. A future
+incompatible stream or frozen-field change still needs a new format.
+Already released readers that predate this contract cannot acquire these
+rules without updating.
 A busy single-player battle takes about 4 KB a minute, half of it
 checksums.
 
@@ -1755,7 +1842,14 @@ change nothing a tick computes.
 **Later.** Pacing notes, chat and session events, rewind, sharing, and a
 canonical-checkpoint digest beside the unit checksums. Compatibility
 requires a simulation that reproduces the recording; there is no
-cross-release compatibility program (Q12, Q20).
+cross-release simulation compatibility program (Q12, Q20). File and
+configuration decoding compatibility does not change that boundary: v1
+playback retains content and identity admission and every recorded checksum,
+and stops at the first divergence rather than emulating an older AI or
+silently accepting a different battle. Authored fixtures from the original
+v1 writer lock single-player Strict and Modern and online playback, and an
+original v2 recording locks pre-extension compatibility. Optional header
+and configuration fields are also tested through actual playback.
 
 ## 11. Seats over time
 
@@ -1930,8 +2024,9 @@ spectator chat.
 Retail disables saving in multiplayer `[08 R-SAVE-02 §4]`, so a Strict 3.1
 online battle offers none, and the first versions offer none in any mode.
 A later multiplayer save would be the canonical snapshot plus the
-configuration, resumed only by the same seats. Survival battles cannot be
-saved in any case (DESIGN_SURVIVAL §11).
+configuration, resumed only by the same seats. A single-player Survival
+battle saves (DESIGN_SURVIVAL §11); an online one, like any online battle,
+does not.
 
 ## 12. The relay and the lobby
 
@@ -2903,7 +2998,7 @@ function pointer alone does not establish the admitted binding.
 | Type/source | Retained logical fields | Exclusions and representation |
 |---|---|---|
 | Terrain/plots | Row-major occupancy words, metal, feature index/sentinel, anchor/damage, gameplay flags; `metalSeeded`; feature names/definitions in record order, including nil rows and runtime appends. | Immutable geometry/heights, physics/map constants and LOS words bind admitted map inputs. The entry void sweep must be finished. Never-explored marker and placer nibble are presentation-only; any otherwise unclassified flag bits are retained. Static obstacle revision is diagnostic. |
-| `features.Service`, `Instance` | Global reproduction cursor, arena held, instances by sorted anchor index, exact active head-to-tail order; definition, cell/position/velocity/orientation, footprint, burning/animating/countdown/suppression, cursor frame/delay/sequence presence/key, active/arena/runtime-live flags, animation selector, damage accumulator. | `runtimeLive` affects replacement transforms. Lookup caches rebuild from sorted keys; active linkage reconstructs from the retained active order. Active-walk/pending-burn handoffs are rejected. Last reproduction index, reclaim/status/sinking/settled/shadow presentation and saved anchor staging are excluded. |
+| `features.Service`, `Instance` | Concrete feature-pool policy tag, global reproduction cursor, arena held, instances by sorted anchor index, exact active head-to-tail order; definition, cell/position/velocity/orientation, footprint, burning/animating/countdown/suppression, cursor frame/delay/sequence presence/key, active/arena/runtime-live flags, animation selector, damage accumulator. | `runtimeLive` affects replacement transforms. Lookup caches rebuild from sorted keys; active linkage reconstructs from the retained active order. Active-walk/pending-burn handoffs are rejected. Last reproduction index, reclaim/status/sinking/settled/shadow presentation and saved anchor staging are excluded. |
 | `visibility.Service` | Semantic mode bits, dimensions, row-major word mask; byte grids and retained wide coverage counts by player then row; local/team/viewer-defeated; footprints by observer ID with owner/cells/height/radius/quantized/live/stored cells/stored byte; effective Community inputs. | Fog caches, the mode cache-valid bit, publication versions/identities and rebuild flags are excluded. Spokes derive from immutable ray tables. The sensor index rebuilds every sensor tick; `sensorInputs` and `sensorStatusByID` have no production readers. Contact bits live in unit flags; cadence in session/ledger. |
 | Movement base state | Per-handle routes, steers, collisions, flights, copied profiles/names, working sets, previous move tier/SFX band; layer registry, learned terrain, pending layers, active orders/next activation, arrival handles, move/record goals, provider, first requests, unreachable/jam/traffic/pocket state, work tick/smoothing budget, pilots, repair landings, air-base lists; effective fallback/Community/path-player/unit-limit inputs and current tick. | The tick must be ended, the overlap scan inactive and the provider eligibility cache invalid. Diagnostics, path failures, history/lab counters and per-call scratch walks are excluded. `passAlliance`/`trafficNow` are replaced at BeginTick for the recognized pure rules; unknown stateful rules cannot claim that exclusion. |
 | Route/profile/steer | Entire route `Points[20]`, count/active/dirty/repath/request/status/first-hold/pending; all eight profile footprint/water/slope fields; steer X/Z, heading/pending heading, dirty/speed/max velocity/turn rate/height/sea-level/definition flags/acceleration/brake. | Inactive route storage remains readable. `Route.StaticRevision` has only diagnostic readers. |
@@ -2960,7 +3055,17 @@ behaviour.
 
 #### 16.3.6 Canonical format and public API
 
-Schema 4 (2026-10-17) adds the order queue's firing-position no-room answer,
+Schema 6 (2026-10-23) adds the retained `AIDifficultyReversed` boolean to
+every resolved Community table, after `AIDifficultyIncome` in source-field
+lexical order. The table is now 32 boolean bytes and fourteen i64s (144
+bytes), including false values. The shared version also changes the AI
+application-history hash domains; their receipt payloads are unchanged.
+
+Schema 5 (2026-10-20) adds the stateless feature-pool policy tag. Modern
+feature allocation grows to the plot-cell count; Strict/Community admission
+keeps 2,048, and a switch preserves already existing records
+([Modern feature growth](DESIGN_ECONOMY_CONSTRUCTION.md#modern-feature-growth)).
+Schema 4 (2026-10-17) added the order queue's firing-position no-room answer,
 which Modern combat reads (DESIGN_WEAPONS_PROJECTILES §2.3.2 "No room").
 Schema 3 (2026-10-14) added visibility's retained wide coverage rows. Counts
 remain meaningful across rule switches and are not recoverable from saturated
@@ -2980,7 +3085,7 @@ dependencies.
 
 ```go
 // internal/sim/checkpoint
-const SchemaVersion uint16 = 4
+const SchemaVersion uint16 = 6
 const OwnerCount = 13
 
 type Owner uint16
@@ -3914,7 +4019,7 @@ func (a *ApplicationAttempt) RecordOrder(actor checkpoint.Allocation, receipt or
 | Classic 1, order | kind u8, Code i64, ResolvedRow u8, Modifier u8, Argument i32, X/Y/Z i64, raw target u32 |
 | Classic 2, typed build | kind u8, BuildKind i64, UnitKey string, X/Z i64, Count i64, BuildRequest.Tick u32 |
 | Classic 3, activation | kind u8, Active Boolean |
-| Modern, CmdKind 1–20 | Kind u8, Queued Boolean, raw target u32, X/Z i32, ProductIndex i32, ProductKey string, Slot/Count/Spot/Spacing i32, Keep/Exact Boolean, RowNear i32 |
+| Modern, CmdKind 1–21 | Kind u8, Queued Boolean, raw target u32, X/Z i32, ProductIndex i32, ProductKey string, Slot/Count/Spot/Spacing i32, Keep/Exact Boolean, RowNear i32 |
 
 Operands: actor count u32 and each allocation in observed order (duplicates
 kept), target presence and allocation, product presence and definition.
@@ -4349,7 +4454,7 @@ shakeOffsetX i32; shakeOffsetY i32; shakeRemaining i32.
 | Skirmish | CommanderDeath i64; Difficulty i64; Gameplay string; LOSType i64; LineOfSight i64; Location i64; MapName string; Mapping i64; NumPlayers i64; Players [10]SkirmishPlayer; RNGCrtSeed u32; RNGSimSeed u32; Survival options; UnitLimit i64 |
 | SkirmishPlayer | AI u8; AllyGroup i64; Controller i64; Energy i64; Metal i64; Side i64 |
 | Survival options | Enabled bool; NoAir bool; NoNaval bool; Pace u8 |
-| Mutators | AreaOfEffect, BuildCost, BuildSpeed, Damage, FireRate, Health, Income, Radar, Salvage, Sight, UnitSpeed; each Factor has Den u8 then Num u8 |
+| Mutators | AreaOfEffect, BuildCost, BuildSpeed, BuilderSpeed, Damage, FireRate, Health, Income, Radar, Salvage, Sight, UnitSpeed; each Factor has Den u8 then Num u8 |
 | Restrictions | u32 entry count, then each Count u8, Unit string in the canonical order returned by Entries |
 
 Community and EntryCommunity use `community.Features.WriteCheckpoint`; Wind

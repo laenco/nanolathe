@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/nanolathe-gg/nanolathe/internal/addonlibrary"
 	"github.com/nanolathe-gg/nanolathe/internal/content"
 	"github.com/nanolathe-gg/nanolathe/internal/maplibrary"
 	"github.com/nanolathe-gg/nanolathe/internal/modfetch"
@@ -237,12 +238,16 @@ func roomMapHolders(cs *contentSet, mapName string) (map[string]bool, error) {
 		return holders, nil
 	}
 	base := roomMapBase(mapName)
-	found, playable := false, false
+	found, playable, generated := false, false, false
 	for _, ext := range []string{".ota", ".tnt"} {
 		for _, src := range cs.unmappedMount.Sources("maps/" + base + ext) {
 			found = found || ext == ".ota"
 			path := filepath.Clean(src.Source.SourcePath)
 			switch {
+			case strings.HasPrefix(src.Source.ProviderID(), "generated:"):
+				// Held in this machine's memory; rooms are to carry a
+				// generated map by its recipe (DESIGN_MAP_GENERATOR §11).
+				generated = true
 			case src.Source.ProviderType != "directory":
 				holders[path] = true
 				playable = playable || ext == ".ota"
@@ -250,6 +255,9 @@ func roomMapHolders(cs *contentSet, mapName string) (map[string]bool, error) {
 				playable = playable || ext == ".ota"
 			}
 		}
+	}
+	if found && !playable && generated {
+		return nil, fmt.Errorf("nanolathe: naming the room's content failed: logical path maps/%s.ota, providers searched [generated maps], expected a map every seat can mount; online rooms do not take generated maps yet", base)
 	}
 	if found && !playable {
 		return nil, fmt.Errorf("nanolathe: naming the room's content failed: logical path online map, providers searched [%s], expected maps/%s.ota in an archive, a downloaded map package or the mod; loose files are not used online", strings.Join(cs.baseRoots, ", "), base)
@@ -440,11 +448,11 @@ type roomContentPlan struct {
 	// base archives it holds in other bytes.
 	missing   []session.MatchContentEntry
 	different []session.MatchContentEntry
-	// addons are the listed add-ons' archive files, which mount in the base
-	// install's folder at its *.UFO tier; enable are listed add-ons the
+	// addons are the listed add-ons, kept grouped so their audited content
+	// selects the same layer and layout as a local mount; enable are add-ons the
 	// library holds that this seat's content does not mount, and fetch the
 	// missing ones the add-on catalogue offers (resolveRoomAddon).
-	addons []string
+	addons []addonlibrary.Addon
 	enable []settings.AddonSelection
 	fetch  []modfetch.Entry
 }
@@ -532,6 +540,21 @@ func installedMapPackages() []modlibrary.Mod {
 // config's directory table. The caller closes the returned overlay once the
 // battle frozen from it is gone.
 func roomContentFS(cs *contentSet, plan roomContentPlan) (*vfs.FS, vfs.FSOps, error) {
+	var paths []string
+	var supplies []addonSupply
+	for _, addon := range plan.addons {
+		factions, err := addonlibrary.Factions(addon)
+		if err != nil {
+			return nil, nil, fmt.Errorf("nanolathe: reading the room's add-on failed: logical path %s, providers searched [%s], expected readable faction declarations: %w", addon.ID, strings.Join(addon.Paths, ", "), err)
+		}
+		modelsOnly, err := addonlibrary.ModelsOnly(addon)
+		if err != nil {
+			return nil, nil, fmt.Errorf("nanolathe: reading the room's add-on failed: logical path %s, providers searched [%s], expected readable model paths: %w", addon.ID, strings.Join(addon.Paths, ", "), err)
+		}
+		paths = append(paths, addon.Paths...)
+		supplies = append(supplies, addonSupply{addon: addon, faction: len(factions) > 0, layer: addonLayerOf(addon, len(factions) > 0, modelsOnly)})
+	}
+	factions, models := factionArchives(supplies), modelArchives(supplies)
 	roots := make([]vfs.GameRoot, 0, len(plan.packages)+len(cs.baseRoots)+1)
 	for _, dir := range plan.packages {
 		roots = append(roots, vfs.GameRoot{Dir: dir})
@@ -543,7 +566,9 @@ func roomContentFS(cs *contentSet, plan roomContentPlan) (*vfs.FS, vfs.FSOps, er
 		}
 		game := vfs.GameRoot{Dir: root, Archives: admit, NoLoose: true}
 		if i == 0 {
-			game.Extra = plan.addons
+			game.Extra = paths
+			game.ExtraLayout = addonExtraLayout(cs.layout, factions, models)
+			game.ExtraTier = addonExtraTier(factions, models)
 		}
 		roots = append(roots, game)
 	}

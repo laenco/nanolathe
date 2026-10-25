@@ -112,9 +112,12 @@ func TestSkirmishPlacementTakesNoSimulationDraw(t *testing.T) {
 // authors StartPos1 only, so slot 1's lookup for stored number 1 (label
 // StartPos2) misses and battle entry fails with retail's verbatim text. The
 // number in the message is the STORED one, zero-based — slot 1 reports 1
-// [08 R-ENTRY-01 §5] step 4.
+// [08 R-ENTRY-01 §5] step 4. It is retail's contract, so the session binds
+// Strict 3.1's seat rules; Modern seats the player at a generated start
+// (TestExtraPlayersBeginAtGeneratedStarts).
 func TestSkirmishMissingStartPositionIsFatal(t *testing.T) {
 	s := strictNewSessionWithUnits(t, 0, 7, 11)
+	s.Rules.Seats = StrictSeats{}
 	m := wu19178Mission(mission.Special{Kind: 1, ID: 0, X: 12, Z: 20, Name: "StartPos1"})
 	err := skirmishReconstructUnits(s, wu19178Config(), m)
 	if err == nil {

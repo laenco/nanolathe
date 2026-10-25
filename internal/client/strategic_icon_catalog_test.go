@@ -11,7 +11,7 @@ import (
 )
 
 func TestStrategicIconAuthoredLevelsDoNotDependOnRoleOrNames(t *testing.T) {
-	cat := iconTestCatalog()
+	cat := iconTestCatalog(iconUnit("product", "TANK", 100))
 	cases := []struct {
 		name, category string
 		level          int
@@ -61,7 +61,7 @@ func TestStrategicIconAuthoredLevelsDoNotDependOnRoleOrNames(t *testing.T) {
 }
 
 func iconUnit(name, category string, id uint32) *content.UnitDef {
-	return &content.UnitDef{DefinitionHeader: content.DefinitionHeader{CanonicalKey: name}, UnitName: name, UnitDefID: id, Category: category, BMCode: 1}
+	return &content.UnitDef{DefinitionHeader: content.DefinitionHeader{CanonicalKey: name}, UnitName: name, UnitDefID: id, Category: category, BMCode: 1, FootprintX: 1, FootprintZ: 1}
 }
 func iconTestCatalog(units ...*content.UnitDef) *content.Catalog {
 	cat := &content.Catalog{Units: map[string]*content.UnitDef{}, BuildMenus: map[string]*content.BuildMenuPage{}}
@@ -304,5 +304,42 @@ func TestStrategicIconAtlasIsSharedByArtKeys(t *testing.T) {
 	fresh, _ := drawStrategicIconAtlas(keys, unique)
 	if shared, _ := makeStrategicIconAtlas(art); shared != a.Atlas || !bytes.Equal(fresh.Pixels, shared.Pixels) {
 		t.Fatal("the shared atlas is not the one a fresh draw makes")
+	}
+}
+
+// A structure whose menu holds only footprint-less upgrades, as Escalation's
+// towers, reactors and repair pads do, or names no unit at all, is drawn for
+// what it is rather than as a factory; one product that occupies ground still
+// makes it a factory.
+func TestStrategicIconUpgradeOnlyMenuIsNotAFactory(t *testing.T) {
+	tower := iconUnit("tower", "", 1)
+	tower.BMCode, tower.Builder = 0, true
+	tower.Weapon1Def = &content.WeaponDef{ID: 1, BeamWeapon: true}
+	reactor := iconUnit("reactor", "ENERGY", 2)
+	reactor.BMCode, reactor.Builder, reactor.EnergyMake = 0, true, 1000
+	broken := iconUnit("broken", "", 3)
+	broken.BMCode, broken.Builder = 0, true
+	broken.Weapon1Def = &content.WeaponDef{ID: 2, BeamWeapon: true}
+	plant := iconUnit("plant", "PLANT", 4)
+	plant.BMCode, plant.Builder = 0, true
+	plant.Weapon1Def = &content.WeaponDef{ID: 3, BeamWeapon: true}
+	upgrade := iconUnit("upgrade", "", 5)
+	upgrade.FootprintX, upgrade.FootprintZ = 0, 0
+	tank := iconUnit("tank", "TANK", 6)
+	cat := iconTestCatalog(tower, reactor, broken, plant, upgrade, tank)
+	cat.BuildMenus["tower"] = &content.BuildMenuPage{Buttons: []string{"upgrade", "upgrade"}}
+	cat.BuildMenus["reactor"] = &content.BuildMenuPage{Buttons: []string{"upgrade"}}
+	cat.BuildMenus["broken"] = &content.BuildMenuPage{Buttons: []string{"missing"}}
+	cat.BuildMenus["plant"] = &content.BuildMenuPage{Buttons: []string{"upgrade", "tank"}}
+	c := NewStrategicIconCatalog(cat)
+	for _, want := range []struct{ unit, role, subtype string }{
+		{"tower", "combat", "beam"},
+		{"reactor", "energy", ""},
+		{"broken", "combat", "beam"},
+		{"plant", "factory", ""},
+	} {
+		if d, _ := c.Lookup(want.unit, 0); d.Role != want.role || d.Subtype != want.subtype {
+			t.Errorf("%s: role=%s subtype=%s, want %s %s", want.unit, d.Role, d.Subtype, want.role, want.subtype)
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -40,8 +41,8 @@ func checkMatchDecode(t testing.TB, payload []byte) bool {
 	return true
 }
 
-// Every proper prefix of a valid payload is refused, and so is any byte
-// after its end.
+// Without extensions, every proper prefix is refused, and a single
+// trailing byte cannot form a valid extension tail.
 func TestDecodeMatchConfigRefusesTruncationAndTrailingBytes(t *testing.T) {
 	for _, r := range []MatchConfigRequest{validMatchRequest(t), validSurvivalRequest(t)} {
 		payload := encodeMatchForTest(t, resolveMatch(t, r))
@@ -232,6 +233,51 @@ func TestMatchConfigEncodingIsUnchangedBySharedPrimitives(t *testing.T) {
 		if hex.EncodeToString(sum[:]) != c.version1 || hex.EncodeToString(digest[:]) != c.digest {
 			t.Errorf("%s: version-1 part %x, identity %x; want the recorded %s, %s", c.name, sum, digest, c.version1, c.digest)
 		}
+		// The recorded version-1 vector is the complete historical payload,
+		// not a current configuration with an empty field 16 appended.
+		legacyPayload := append([]byte(nil), payload[:len(payload)-1]...)
+		legacy, err := DecodeReplayMatchConfig(legacyPayload, 1)
+		if err != nil {
+			t.Fatalf("%s: legacy replay configuration: %v", c.name, err)
+		}
+		wantLegacy := sha256.Sum256(append([]byte("nanolathe/match-config/1"), legacyPayload...))
+		if legacy.Digest() != wantLegacy || !bytes.Equal(encodeMatchForTest(t, legacy), legacyPayload) {
+			t.Fatalf("%s: legacy encoding or identity changed", c.name)
+		}
+		if legacy.Digest() == digest || !reflect.DeepEqual(legacy.Request(), config.Request()) {
+			t.Fatalf("%s: legacy fields or versioned identity lost", c.name)
+		}
+		if request := legacy.Request(); request.RoomContent != nil || request.Extensions != nil {
+			t.Fatalf("%s: legacy decoding filled fields absent from version 1", c.name)
+		}
+		// All public storage boundaries own their bytes, including legacy
+		// decode input and EncodeMatchConfig's returned copy.
+		legacyPayload[0] ^= 0xff
+		if legacy.Digest() != wantLegacy || bytes.Equal(encodeMatchForTest(t, legacy), legacyPayload) {
+			t.Fatalf("%s: legacy decoding retained the input buffer", c.name)
+		}
+		encoded := encodeMatchForTest(t, legacy)
+		encoded[0] ^= 0xff
+		if bytes.Equal(encoded, encodeMatchForTest(t, legacy)) {
+			t.Fatalf("%s: legacy encoding exposed frozen bytes", c.name)
+		}
+		legacyPayload = payload[:len(payload)-1]
+		if _, err := DecodeMatchConfig(legacyPayload); err == nil {
+			t.Fatalf("%s: current online decoding admitted version 1", c.name)
+		}
+		for _, invalid := range [][]byte{legacyPayload[:len(legacyPayload)-1], payload, append(append([]byte(nil), legacyPayload...), 1)} {
+			if bad, err := DecodeReplayMatchConfig(invalid, 1); err == nil || bad.Digest() != ([32]byte{}) {
+				t.Fatalf("%s: malformed legacy payload accepted: %v", c.name, err)
+			}
+		}
+		current, err := DecodeReplayMatchConfig(payload, 2)
+		if err != nil || current.Digest() != digest {
+			t.Fatalf("%s: version-2 replay configuration changed: %v", c.name, err)
+		}
+		current.version = 0
+		if current.Digest() != digest {
+			t.Fatalf("%s: default version metadata changed the current identity", c.name)
+		}
 	}
 }
 
@@ -260,4 +306,14 @@ func FuzzDecodeMatchConfig(f *testing.F) {
 	f.Fuzz(func(t *testing.T, payload []byte) {
 		checkMatchDecode(t, payload)
 	})
+}
+
+func TestDecodeReplayMatchConfigRefusesUnsupportedVersions(t *testing.T) {
+	payload := encodeMatchForTest(t, resolveMatch(t, validMatchRequest(t)))
+	for _, version := range []uint16{0, 3, 65535} {
+		c, err := DecodeReplayMatchConfig(payload, version)
+		if err == nil || !strings.Contains(err.Error(), "configuration.version") || c.Digest() != ([32]byte{}) {
+			t.Errorf("version %d: expected explicit refusal, got %v", version, err)
+		}
+	}
 }

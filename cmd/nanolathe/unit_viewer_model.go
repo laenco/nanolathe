@@ -424,14 +424,9 @@ func unitViewerBounds(m *model.Model, states []model.PieceState) (lo, hi [3]floa
 	lo = [3]float64{math.Inf(1), math.Inf(1), math.Inf(1)}
 	hi = [3]float64{math.Inf(-1), math.Inf(-1), math.Inf(-1)}
 	for i, p := range m.Pieces {
-		hidden := false
-		for ancestor, n := i, 0; ancestor >= 0 && ancestor < len(m.Pieces) && n < len(m.Pieces); ancestor, n = m.Pieces[ancestor].Parent, n+1 {
-			if ancestor < len(states) && states[ancestor].Hidden {
-				hidden = true
-				break
-			}
-		}
-		if hidden {
+		// Fit the same independently visible pieces the renderer draws; a
+		// hidden pivot still positions its visible children [03 §2.4.1].
+		if i < len(states) && states[i].Hidden {
 			continue
 		}
 		transform := model.Compose(m, states, i)

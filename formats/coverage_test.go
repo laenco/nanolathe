@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/nanolathe-gg/nanolathe/formats"
+	"github.com/nanolathe-gg/nanolathe/internal/content"
 	"github.com/nanolathe-gg/nanolathe/internal/testsupport"
 	"github.com/nanolathe-gg/nanolathe/vfs"
 )
@@ -170,7 +171,9 @@ func TestFormatCoverage(t *testing.T) {
 			defer wg.Done()
 			for idx := range queue {
 				j := jobsList[idx]
-				data, err := fileSystem.ReadFileLimit(j.path, 64<<20)
+				// The host's terrain read cap, the largest it has: community
+				// map packs carry terrain files of about 65 MiB.
+				data, err := fileSystem.ReadFileLimit(j.path, content.RetailTNTBytes)
 				if err != nil {
 					results[idx] = corpusFile{ext: j.ext, path: j.path, err: err}
 					continue

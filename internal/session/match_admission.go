@@ -318,6 +318,9 @@ func matchSkirmishSetup(r *MatchConfigRequest) (SkirmishConfig, SkirmishEntryOpt
 	if r.SessionKind == MatchOnlineSurvival {
 		cfg.Survival = SurvivalOptions{Enabled: true, Pace: r.SurvivalPace, NoAir: r.SurvivalNoAir, NoNaval: r.SurvivalNoNaval}
 	}
+	// The single-player reading; an online composition reads the request's
+	// own word (setOnlineVisionTeams).
+	cfg.AlliedSight = r.AlliedSight.Shared(false)
 	options := SkirmishEntryOptions{
 		Mutators: r.Mutators,
 		ContentLimits: content.Limits{
@@ -369,6 +372,7 @@ func matchSkirmishSetup(r *MatchConfigRequest) (SkirmishConfig, SkirmishEntryOpt
 			AllyGroup: int(seat.AllyGroup),
 			Metal:     int(seat.Metal),
 			Energy:    int(seat.Energy),
+			Start:     seat.Start,
 		}
 		switch seat.Role {
 		case MatchRoleHuman:

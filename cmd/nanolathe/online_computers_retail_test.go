@@ -9,6 +9,8 @@ import (
 
 	"github.com/nanolathe-gg/nanolathe/internal/ai"
 	"github.com/nanolathe-gg/nanolathe/internal/session"
+	"github.com/nanolathe-gg/nanolathe/internal/sim/numeric"
+	"github.com/nanolathe-gg/nanolathe/internal/units"
 )
 
 // addRetailComputers is the host adding, through its lobby rows, a Modern AI
@@ -81,22 +83,34 @@ func TestOnlineLobbyComputersRetail(t *testing.T) {
 			t.Fatalf("player %d composed %+v", i+1, sk.Players[:sk.NumPlayers])
 		}
 	}
+	// A computer's first build or first move changes the checksums the relay
+	// compared, so either proves its AI ran alike on both clients. Neither
+	// computer need build by the end: the Classic AI's first build varies
+	// with the room's seeds, and the Modern AI's commander may first walk to
+	// a metal spot beyond home, since its leash reaches the second-nearest.
 	const ticks = 600
-	pumpOnlineRetail(t, shells, ticks, nil)
-	awaitRelayAgreement(t, shells, ticks-60)
-	// A computer's first build changes the checksums the relay compared, so
-	// one that built proves its AI ran alike on both clients. The Modern AI
-	// builds within a few hundred ticks; the Classic AI's first build varies
-	// with the room's seeds, so it is logged, not required.
-	var units [4]int
+	pumpOnlineRetail(t, shells, 1, nil)
+	start := map[*units.Unit][2]numeric.Fixed{}
 	for _, u := range shells[0].battle.sess.Units.IterSliced() {
-		if u.Alive && int(u.Owner) < len(units) {
-			units[u.Owner]++
+		if u.Alive && u.Owner >= 2 {
+			start[u] = [2]numeric.Fixed{u.X, u.Z}
 		}
 	}
-	t.Logf("units by player at tick %d: %v", shells[0].battle.sess.Clock.GlobalTick, units)
-	if units[2]+units[3] <= 2 {
-		t.Fatalf("the computers built nothing by tick %d: %v", ticks, units)
+	pumpOnlineRetail(t, shells, ticks, nil)
+	awaitRelayAgreement(t, shells, ticks-60)
+	var count [4]int
+	moved := 0
+	for _, u := range shells[0].battle.sess.Units.IterSliced() {
+		if u.Alive && int(u.Owner) < len(count) {
+			count[u.Owner]++
+		}
+		if p, ok := start[u]; ok && u.Alive && (abs(int(u.X-p[0])) > 32<<16 || abs(int(u.Z-p[1])) > 32<<16) {
+			moved++
+		}
+	}
+	t.Logf("units by player at tick %d: %v; computer units moved: %d", shells[0].battle.sess.Clock.GlobalTick, count, moved)
+	if count[2]+count[3] <= 2 && moved == 0 {
+		t.Fatalf("the computers neither built nor moved by tick %d: %v", ticks, count)
 	}
 }
 

@@ -162,6 +162,12 @@ type VM struct {
 	// per tick from wall-clock or game-speed budget [04 §4.6]. All four
 	// speed/deceleration divides and the sleep conversion read it.
 	tickDenom int32
+	// buildRate is the Builder speed mutator's factor, latched by the binding
+	// before Create (SetBuilderSpeed); 0 and 1 are the identity. Inside the
+	// program's build-animation functions it multiplies the four per-tick
+	// speed conversions and divides the sleep conversion. Nanolathe policy,
+	// not retail state (docs/DESIGN_MODS_MUTATORS.md "Builder speed").
+	buildRate int32
 
 	DrainCalls        int    // count of Drain invocations for RS-08 one-drain invariant [04 §4.2][GAP T15]
 	activeThreadCount uint32 // authoritative active-thread count [04 §4.2]
@@ -1425,8 +1431,10 @@ func (v *VM) runThread(idx int) {
 			anim.moveTarget = target
 			// Keep the signed script speed; negate it only when the target is
 			// below the current translation [04 §4.6].
-			perTick := int32(int64(speed) / int64(v.tickDenom)) // latched denominator [04 §4.6]; trunc toward zero per I3.
-			cur := int32(v.Pieces[piece].Trans[axis].Raw())     // signed translation returned by the adapter [04 §4.6]
+			// Builder speed multiplies the speed inside a build animation; the
+			// rate is 1 everywhere else (build_animation.go).
+			perTick := int32(int64(speed) * v.animRate(t.PC) / int64(v.tickDenom)) // latched denominator [04 §4.6]; trunc toward zero per I3.
+			cur := int32(v.Pieces[piece].Trans[axis].Raw())                        // signed translation returned by the adapter [04 §4.6]
 			if cur > target {
 				perTick = -perTick // signed target comparison, not an absolute speed [04 §4.6]
 			}
@@ -1452,8 +1460,8 @@ func (v *VM) runThread(idx int) {
 			anim.turnTarget = tgt // the axis's turn-target word [04 §4.6]
 			anim.spinAccel = 0    // clears any stale spin acceleration on this axis [04 §4.6]
 			// perTick = trunc(speedRaw/30), then the shortest-arc sign choice below [04 §4.6].
-			perTick := int32(int64(speed) / int64(v.tickDenom)) // latched denominator [04 §4.6]; trunc toward zero per I3.
-			curAng := v.Pieces[piece].GetAngle(axis)            // [03 §2.4] C21 via GetAng
+			perTick := int32(int64(speed) * v.animRate(t.PC) / int64(v.tickDenom)) // latched denominator [04 §4.6]; trunc toward zero per I3; Builder speed inside a build animation.
+			curAng := v.Pieces[piece].GetAngle(axis)                               // [03 §2.4] C21 via GetAng
 			// The signed raw target delta and strict half-circle comparison select
 			// the issued direction [04 §4.6].
 			delta := int64(tgt) - int64(curAng) // -65535..65535, not int16-wrapped; >0x8000 triggers shortest-arc flip
@@ -1491,8 +1499,9 @@ func (v *VM) runThread(idx int) {
 			// spin sentinel, the spin target speed as trunc(speed/30), and
 			// the spin acceleration as trunc(accel/30), truncating toward
 			// zero [I3] with the fixed 30 denominator [04 §4.6].
-			perTickSpeed := int32(int64(speed) / int64(v.tickDenom)) // trunc toward zero [04 §4.6], latched denominator
-			perTickAccel := int32(int64(accel) / int64(v.tickDenom))
+			rate := v.animRate(t.PC)                                        // Builder speed inside a build animation, else 1
+			perTickSpeed := int32(int64(speed) * rate / int64(v.tickDenom)) // trunc toward zero [04 §4.6], latched denominator
+			perTickAccel := int32(int64(accel) * rate / int64(v.tickDenom))
 			// The spin sentinel is conceptual here; the spinActive bool distinguishes spin state from an ordinary turn [04 §4.6].
 			anim.spinTarget = perTickSpeed // the axis's spin-target word [04 §4.6]
 			anim.spinAccel = perTickAccel  // the axis's spin-acceleration word [04 §4.6]
@@ -1522,9 +1531,9 @@ func (v *VM) runThread(idx int) {
 			// acceleration to -(decel/30); it does not set the per-piece
 			// busy flag or the global dirty flag itself — it relies on the
 			// prior spin's dirty to reach the interpolator [04 §4.6].
-			anim.spinTarget = 0                                    // zero target speed [04 §4.6]
-			perTickDecel := int32(int64(dec) / int64(v.tickDenom)) // trunc toward zero, latched denominator [04 §4.6]
-			anim.spinAccel = -perTickDecel                         // -(decel/30) [04 §4.6]
+			anim.spinTarget = 0                                                       // zero target speed [04 §4.6]
+			perTickDecel := int32(int64(dec) * v.animRate(t.PC) / int64(v.tickDenom)) // trunc toward zero, latched denominator [04 §4.6]; Builder speed scales this spin-acceleration word too
+			anim.spinAccel = -perTickDecel                                            // -(decel/30) [04 §4.6]
 			if anim.spinAccel == 0 {
 				anim.turnSpeed = 0 // immediate stop, shared by both rotation modes [04 §4.6]
 				anim.turnBusy = false
@@ -1715,6 +1724,11 @@ func (v *VM) runThread(idx int) {
 			// toward zero. Widening first changes large authored durations
 			// [04 §4.6]. The issuing entry still yields even when ticks <= 0.
 			ticks := (dur * v.tickDenom) / 1000
+			if rate := v.animRate(t.PC); rate > 1 {
+				// Builder speed divides the same wrapped product by 1000·k
+				// inside a build animation (build_animation.go).
+				ticks = int32(int64(dur*v.tickDenom) / (1000 * rate))
+			}
 			t.Sleep = ticks
 			t.Status = ThreadSleeping
 			t.PC += 1

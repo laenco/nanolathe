@@ -45,6 +45,12 @@ import (
 // without mobile nanoframes, and the play parameter's parts. The rehearsal
 // does not move.
 //
+// The run digest folds each controller's aikit.ApplyStats as text, so a
+// new counter there moves it with the game unchanged: the walls work's
+// breach counter and its command kind's failure slot did, with the unit
+// checksum, both streams, the partial fingerprint, the generators and the
+// applied counts all as before.
+//
 // HOW TO UPDATE. A change to the Modern AI's decisions, to a Modern rule or to
 // anything else this battle reaches moves these values; take the reported
 // ones and say in the commit message which behaviour changed and why. A value
@@ -52,7 +58,7 @@ import (
 // build is a lockstep defect, never a reason to update.
 const (
 	lockModernAITicks     = onlineModernSpan
-	lockModernAIRun       = "bf19958f529eb5763a8af42237d54f032827929a74dd3f23b5844b5049b7f872"
+	lockModernAIRun       = "998db733d13b4034ba85abdf35a6da201bebc3c0513361869d863eaf6331fa2d"
 	lockModernAIRehearsal = "15b9dfe98d242faf6a8811e701d35b1d1478a78a284f51f7d6ad7d565edc2dbc"
 )
 

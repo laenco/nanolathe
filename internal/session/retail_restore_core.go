@@ -90,8 +90,7 @@ func RestoreRetailBattleCore(stage *RetailBattleStage) error {
 		if p.Index < 0 || p.Index >= len(s.Econ.Players) {
 			return fmt.Errorf("session: retail restore: player %d outside configured slots", p.Index)
 		}
-		p.ApplyToEconomy(&s.Econ.Players[p.Index])
-		s.Econ.Players[p.Index].Exists = true
+		s.restoreRetailPlayer(p)
 		// The `Player%i` account's `Side` item is that slot's player-table side
 		// ordinal, restored into the low byte with 0 for a missing or mistyped
 		// item [08 "Player records"]. It is the restore-side source of the
@@ -567,6 +566,13 @@ func restoreRetailFeatures(svc *features.Service, cat *content.Catalog, img save
 			}
 			resolved = append(resolved, resolvedFeature{row: row, kind: family.kind, def: def})
 		}
+	}
+	// A serialized animation is a live arena record, even when its restore
+	// would refuse and leave a resting sprite. Reject an expanded image before
+	// any placement or ignition draw rather than reporting a truncated load
+	// (DESIGN_ECONOMY_CONSTRUCTION "Modern feature growth").
+	if err := svc.ValidateRestoreCapacity(len(img.Animating) + len(img.ThreeD)); err != nil {
+		return err
 	}
 	for _, item := range resolved {
 		if _, err := svc.RestoreAt(int(item.row.X), int(item.row.Z), item.def, item.kind, item.row.Data); err != nil {

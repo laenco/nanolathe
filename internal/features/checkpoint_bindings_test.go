@@ -115,9 +115,9 @@ func TestCheckpointFeatureBindingPresenceVector(t *testing.T) {
 	c.World.Terrain = nil
 	s := &Service{}
 	a := checkpoint.NewBindingAuthority()
-	// Independent empty payload: ten presence bytes, arenaHeld/cursor i64,
+	// Independent empty payload: ten presence bytes, one policy byte, arenaHeld/cursor i64,
 	// then zero instance and active counts. No owner state is inlined.
-	want := make([]byte, 34)
+	want := make([]byte, 35)
 	if got := featureCheckpointBytes(t, s, c); !bytes.Equal(got, want) {
 		t.Fatalf("unregistered absent payload = %x, want %x", got, want)
 	}
@@ -150,7 +150,7 @@ func TestCheckpointFeatureBindingPresenceVector(t *testing.T) {
 			owner.bind(s)
 			c := NewCheckpointContext(c.World)
 			bindFeatureCheckpoint(t, s, c, a)
-			want := make([]byte, 34)
+			want := make([]byte, 35)
 			want[owner.offset] = 1
 			if got := featureCheckpointBytes(t, s, c); !bytes.Equal(got, want) {
 				t.Fatalf("owner presence payload = %x, want %x", got, want)

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/nanolathe-gg/nanolathe/vfs"
@@ -55,6 +57,27 @@ func TestMapExpandWritesOnlyPackageFiles(t *testing.T) {
 		if err != nil || string(got) != body {
 			t.Fatalf("%s = %q, %v", name, got, err)
 		}
+	}
+	// The written names are the archive's spelling exactly. A case-insensitive
+	// host file system would open a folded name above, so compare the tree.
+	var written []string
+	if err := filepath.WalkDir(out, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			rel, _ := filepath.Rel(out, p)
+			written = append(written, filepath.ToSlash(rel))
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(written)
+	var spelled []string
+	for name := range want {
+		spelled = append(spelled, name)
+	}
+	slices.Sort(spelled)
+	if !slices.Equal(written, spelled) {
+		t.Fatalf("expanded %q, want %q", written, spelled)
 	}
 	for _, name := range []string{"anims/vismasks.gaf", "units/armfoo.fbi", "sounds/x.wav", "docs/readme.txt"} {
 		if _, err := os.Stat(filepath.Join(out, filepath.FromSlash(name))); !os.IsNotExist(err) {

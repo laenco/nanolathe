@@ -102,16 +102,23 @@ func run(archive, out string, verbose bool) error {
 			skipped++
 			continue
 		}
+		// Logical paths are folded for VFS lookup; localize the authored path
+		// separately so output keeps its casing without escaping the root.
+		name = strings.ReplaceAll(entry.OriginalPath, "\\", "/")
+		relative, err := filepath.Localize(name)
+		if err != nil {
+			return fmt.Errorf("%s: invalid output path: %w", name, err)
+		}
 		folded := strings.ToLower(name)
 		if other, dup := seen[folded]; dup {
 			return fmt.Errorf("case-insensitive duplicate: %s and %s", other, name)
 		}
 		seen[folded] = name
-		data, err := fs.ReadFileLimit(name, 64<<20)
+		data, err := fs.ReadFileLimit(entry.Path, 64<<20)
 		if err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
-		target := filepath.Join(out, filepath.FromSlash(name))
+		target := filepath.Join(out, relative)
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}

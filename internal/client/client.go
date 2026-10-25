@@ -130,6 +130,11 @@ type Client struct {
 	// exitRequested lets authored in-game GUI actions terminate the same
 	// Ebitengine loop as closing the window. It is presentation state only.
 	exitRequested bool
+	// windowClosing records the window system's close request: the shell
+	// saves a live battle before it requests the exit itself
+	// (docs/DESIGN_SESSIONS_AI_SAVE.md §5, "Autosave, quick save and quick
+	// load").
+	windowClosing bool
 	// rendererToggles counts the executor swaps requested through
 	// RequestRendererToggle (F10). The window adapter polls it; nothing else
 	// reads it (docs/DESIGN_GPU_RENDERER.md §14.6) [I6].
@@ -984,6 +989,12 @@ func (c *Client) RequestExit() { c.exitRequested = true }
 
 // ExitRequested reports whether RequestExit has been called.
 func (c *Client) ExitRequested() bool { return c.exitRequested }
+
+// NoteWindowClosing records that the user asked to close the window.
+func (c *Client) NoteWindowClosing() { c.windowClosing = true }
+
+// WindowClosing reports whether the user asked to close the window.
+func (c *Client) WindowClosing() bool { return c != nil && c.windowClosing }
 
 // RequestRendererToggle asks the window adapter to swap presentation executors
 // — F10 of docs/DESIGN_GPU_RENDERER.md §14.6. The client owns neither executor,
